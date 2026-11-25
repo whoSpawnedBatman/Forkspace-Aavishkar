@@ -37,9 +37,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  list(scope: "mine" | "public" | "shared", tag = "") {
+  list(scope: "mine" | "public" | "shared", searchText = "") {
     const query = new URLSearchParams({ scope });
-    if (tag.trim()) query.set("tag", tag.trim().toLowerCase());
+    const trimmed = searchText.trim();
+    if (trimmed.startsWith("#") && trimmed.length > 1) {
+      query.set("tag", trimmed.slice(1).toLowerCase());
+    } else if (trimmed) {
+      query.set("q", trimmed);
+    }
     return request<{ items: SnippetSummary[] }>(`/snippets?${query}`);
   },
   read(id: string) {
@@ -54,8 +59,20 @@ export const api = {
   fork(id: string) {
     return request<{ id: string }>(`/snippets/${id}/fork`, { method: "POST" });
   },
+  delete(id: string) {
+    return request<{ id: string; deleted: boolean }>(`/snippets/${id}`, { method: "DELETE" });
+  },
   graph(id: string) {
     return request<ForkGraph>(`/snippets/${id}/graph`);
+  },
+  starState(id: string) {
+    return request<{ star_count: number; starred: boolean }>(`/snippets/${id}/star`);
+  },
+  star(id: string) {
+    return request<{ starred: boolean }>(`/snippets/${id}/star`, { method: "PUT" });
+  },
+  unstar(id: string) {
+    return request<{ starred: boolean }>(`/snippets/${id}/star`, { method: "DELETE" });
   },
   grantAccess(id: string, email: string) {
     return request<{ email: string; access: "viewer" }>(`/snippets/${id}/access`, {

@@ -32,6 +32,7 @@ export default function WorkspacePage() {
   const [busy, setBusy] = useState(false);
   const [savedVisibility, setSavedVisibility] = useState<SnippetInput["visibility"]>("private");
   const [graph, setGraph] = useState<ForkGraph | null>(null);
+  const [starInfo, setStarInfo] = useState<{ star_count: number; starred: boolean } | null>(null);
   const [shareEmail, setShareEmail] = useState("");
   const latestSearch = useRef(0);
 
@@ -58,6 +59,7 @@ export default function WorkspacePage() {
       setVisibility(snippet.visibility);
       setSavedVisibility(snippet.visibility);
       setGraph(snippet.visibility === "public" ? await api.graph(snippet.id) : null);
+      setStarInfo(await api.starState(snippet.id).catch(() => null));
       setFiles(snippet.files);
       setActiveFile(0);
       setNotice(canEdit ? "Snippet reopened and ready to edit." : "Public snippet opened in read-only mode.");
@@ -220,10 +222,12 @@ export default function WorkspacePage() {
           <div className="editor-toolbar">
             <div><span className="eyebrow">{selectedId ? (editable ? "EDITING" : "VIEWING") : "NEW SNIPPET"}</span><h2>{title || "Untitled snippet"}</h2></div>
             <div className="toolbar-actions">
+              {selectedId && starInfo && <button className="small-button" onClick={async () => { try { setBusy(true); if (starInfo.starred) { await api.unstar(selectedId); } else { await api.star(selectedId); } setStarInfo(await api.starState(selectedId)); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update star."); } finally { setBusy(false); } }} disabled={busy}>{starInfo.starred ? "★" : "☆"} {starInfo.star_count}</button>}
               {graph && <a className="small-button highlight-link" href="#fork-graph">Fork graph ({graph.nodes.length})</a>}
               {selectedId && <button className="small-button" onClick={copyEmbed}>{savedVisibility === "public" ? "Copy embed link" : "Copy access link"}</button>}
               {selectedId && savedVisibility !== "private" && <a className="small-button highlight-link" href={`${apiOrigin}/embed/${selectedId}`} target="_blank" rel="noreferrer">Highlighted view</a>}
               {selectedId && !editable && <button className="small-button primary" onClick={fork} disabled={busy}>Fork snippet</button>}
+              {selectedId && editable && <button className="small-button" onClick={async () => { try { setBusy(true); setError(""); await api.delete(selectedId); newSnippet(); await refresh(scope, ""); setNotice("Snippet deleted."); } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not delete snippet."); } finally { setBusy(false); } }} disabled={busy}>Delete</button>}
               {editable && <button className="small-button primary" onClick={save} disabled={busy}>{busy ? "Saving…" : selectedId ? "Save changes" : "Save snippet"}</button>}
             </div>
           </div>
@@ -254,24 +258,76 @@ export default function WorkspacePage() {
             {editable && files.length < 20 && <button onClick={() => { setFiles([...files, { path: `file-${files.length + 1}.txt`, content: "" }]); setActiveFile(files.length); }}>+</button>}
           </div>
           <div className="code-editor">
-            <input aria-label="File path" value={files[activeFile]?.path ?? ""} onChange={(event) => updateFile({ path: event.target.value })} disabled={!editable} />
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <input aria-label="File path" style={{ flex: 1 }} value={files[activeFile]?.path ?? ""} onChange={(event) => updateFile({ path: event.target.value })} disabled={!editable} />
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#475569", background: "#f1f5f9", padding: "4px 10px", borderRadius: "999px", whiteSpace: "nowrap" }}>
+                {(() => {
+                  const ext = (files[activeFile]?.path ?? "").split(".").pop()?.toLowerCase() ?? "";
+                  const map: Record<string, string> = { html: "HTML", htm: "HTML", js: "JavaScript", jsx: "JSX", ts: "TypeScript", tsx: "TSX", css: "CSS", scss: "SCSS", py: "Python", json: "JSON", md: "Markdown", sql: "SQL", sh: "Shell", yml: "YAML", yaml: "YAML", go: "Go", rs: "Rust", java: "Java", c: "C", cpp: "C++", txt: "Plain Text" };
+                  return map[ext] ?? (ext ? ext.toUpperCase() : "Plain Text");
+                })()}
+              </span>
+            </div>
             <textarea aria-label="File content" value={files[activeFile]?.content ?? ""} onChange={(event) => updateFile({ content: event.target.value })} disabled={!editable} spellCheck={false} />
           </div>
           {editable && files.length > 1 && <button className="remove-file" onClick={() => { setFiles(files.filter((_, index) => index !== activeFile)); setActiveFile(0); }}>Remove current file</button>}
-          {graph && (
-            <section className="fork-graph" id="fork-graph" aria-labelledby="fork-graph-title">
-              <div><h3 id="fork-graph-title">Fork graph</h3><span>{graph.nodes.length} public version{graph.nodes.length === 1 ? "" : "s"}</span></div>
-              <div className="graph-flow">
-                {graph.nodes.map((node, index) => (
-                  <div className={`graph-node ${node.id === selectedId ? "current" : ""}`} key={node.id}>
-                    <span>{index === 0 ? "Original" : "Fork"}</span>
-                    <strong>{node.title}</strong>
-                    <small>{node.id.slice(0, 8)}</small>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+          {graph && (() => {
+            const nodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
+            const childrenMap = new Map<string, string[]>();
+            const hasParent = new Set<string>();
+            for (const edge of graph.edges) {
+              hasParent.add(edge.child_id);
+              const list = childrenMap.get(edge.parent_id) ?? [];
+              list.push(edge.child_id);
+              childrenMap.set(edge.parent_id, list);
+            }
+            const roots = graph.nodes.filter((n) => !hasParent.has(n.id));
+            const levels: { id: string; title: string; parentId?: string }[][] = [];
+            let queue = roots.map((r) => ({ id: r.id, title: r.title, parentId: undefined as string | undefined }));
+            const visited = new Set<string>();
+            while (queue.length > 0) {
+              levels.push(queue);
+              const next: typeof queue = [];
+              for (const item of queue) {
+                if (visited.has(item.id)) continue;
+                visited.add(item.id);
+                for (const cid of childrenMap.get(item.id) ?? []) {
+                  const cn = nodeMap.get(cid);
+                  if (cn && !visited.has(cid)) next.push({ id: cn.id, title: cn.title, parentId: item.id });
+                }
+              }
+              queue = next;
+            }
+            return (
+              <section className="fork-graph" id="fork-graph" aria-labelledby="fork-graph-title">
+                <div><h3 id="fork-graph-title">Fork graph</h3><span>{graph.nodes.length} public version{graph.nodes.length === 1 ? "" : "s"} · {graph.edges.length} link{graph.edges.length === 1 ? "" : "s"}</span></div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "16px", overflowX: "auto", padding: "8px 0" }}>
+                  {levels.map((level, depth) => (
+                    <div key={depth} style={{ display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "center", paddingLeft: `${depth * 24}px` }}>
+                      {depth > 0 && <span style={{ color: "#94a3b8", fontSize: "18px", userSelect: "none" }}>↳</span>}
+                      {level.map((node) => {
+                        const parentTitle = node.parentId ? nodeMap.get(node.parentId)?.title : null;
+                        return (
+                          <button
+                            type="button"
+                            key={node.id}
+                            onClick={() => openSnippet(node.id, false)}
+                            className={`graph-node ${node.id === selectedId ? "current" : ""}`}
+                            style={{ textAlign: "left", cursor: "pointer" }}
+                            title={parentTitle ? `Forked from ${parentTitle}` : "Original snippet"}
+                          >
+                            <span>{depth === 0 ? "Original" : `Fork · L${depth}`}</span>
+                            <strong>{node.title}</strong>
+                            <small>{node.id.slice(0, 8)}{parentTitle ? ` ← ${parentTitle}` : ""}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          })()}
           {notice && <p className="workspace-notice" role="status">{notice}</p>}
           {error && <p className="workspace-error" role="alert">{error}</p>}
         </section>

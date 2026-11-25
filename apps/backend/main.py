@@ -21,7 +21,7 @@ from fastapi.responses import (
 )
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
-from pygments.lexers import TextLexer, get_lexer_for_filename
+from pygments.lexers import TextLexer, get_lexer_for_filename, guess_lexer
 from pygments.util import ClassNotFound
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import ValidationError
@@ -284,6 +284,19 @@ def replace_snippet(
     return {"id": id}
 
 
+@app.delete("/snippets/{id}")
+def delete_snippet(id: UUID, user: Caller):
+    require_user(user)
+    with connect() as db:
+        readable(db, id, user, owner=True, lock=True)
+        db.execute("UPDATE snippets SET parent_snippet_id=NULL WHERE parent_snippet_id=%s", (id,))
+        db.execute("DELETE FROM snippet_files WHERE snippet_id=%s", (id,))
+        db.execute("DELETE FROM snippet_stars WHERE snippet_id=%s", (id,))
+        db.execute("DELETE FROM snippet_access WHERE snippet_id=%s", (id,))
+        db.execute("DELETE FROM snippets WHERE id=%s", (id,))
+    return {"id": id, "deleted": True}
+
+
 @app.post("/snippets/{id}/fork", status_code=201)
 def fork_snippet(id: UUID, user: Caller):
     require_user(user)
@@ -358,12 +371,21 @@ def embed(id: UUID, user: Caller, request: Request):
         try:
             lexer = get_lexer_for_filename(file["path"], stripnl=False, ensurenl=False)
         except ClassNotFound:
-            lexer = TextLexer(stripnl=False, ensurenl=False)
+            try:
+                lexer = guess_lexer(file["content"]) if file["content"].strip() else TextLexer(stripnl=False, ensurenl=False)
+            except ClassNotFound:
+                lexer = TextLexer(stripnl=False, ensurenl=False)
+        code_html = (
+            highlight(file["content"], lexer, formatter)
+            if file["content"]
+            else '<div class="highlight"><pre style="color:#94a3b8;font-style:italic">(empty file)</pre></div>'
+        )
         sections.append(
             "<section><h2>"
             + escape(file["path"])
+            + f' <span style="font-size:12px;font-weight:500;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:999px;margin-left:8px">{escape(lexer.name)}</span>'
             + "</h2>"
-            + highlight(file["content"], lexer, formatter)
+            + code_html
             + "</section>"
         )
     forwarded_host = request.headers.get("x-forwarded-host")
@@ -379,7 +401,7 @@ def embed(id: UUID, user: Caller, request: Request):
         '<!doctype html><html lang="en"><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         "<title>" + escape(snippet["title"]) + "</title><style>"
-        "body{font:16px system-ui;margin:24px}h2{font-size:16px}pre{overflow:auto}"
+        "body{font:16px system-ui;margin:24px}h2{font-size:16px;margin:18px 0 8px}pre{overflow:auto;margin:0;padding:10px 12px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}"
         + formatter.get_style_defs(".highlight")
         + "</style><h1>"
         + escape(snippet["title"])
