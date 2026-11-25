@@ -103,3 +103,31 @@ docker compose -p forkspace-phase1-test -f compose.yaml -f compose.test.yaml run
 The test auth service uses a fresh signing secret from the command above and
 is internal to the isolated test stack. Configure the regular stack with
 the same hosted Supabase project as the frontend for the later integration run.
+
+## Local load and recovery checks
+
+Start the isolated test stack, then run regression and load checks sequentially.
+The load script requires the local test auth URL and removes only the records
+owned by its two freshly created test identities.
+
+```powershell
+$env:TEST_JWT_SECRET = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
+docker compose -p forkspace-phase1-test -f compose.yaml -f compose.test.yaml up --build -d --wait
+docker exec forkspace-phase1-test-api-1 python -m pytest -q tests
+docker exec forkspace-phase1-test-api-1 python tests/stress.py
+Invoke-RestMethod http://localhost:8000/health
+```
+
+The measured local run on 25 November 2026 passed all six regression tests in
+29.22 seconds and completed 560 load requests with zero unexpected failures.
+Mixed requests at concurrency 5, 20 and 50 achieved respectively 22.05, 28.46
+and 28.46 requests/second. Their p95 latencies were 442.1, 1247.8 and
+3233.4 milliseconds. Expected 404 privacy denials and 422 invalid-save
+responses were validated. Forty concurrent saves reopened with all 120 files
+intact, and duplicate stars left a single row. Load records were removed afterward.
+
+Stopping the isolated database made health return HTTP 500 with a structured
+service_error. Starting it again restored HTTP 200 and status ok without an
+API restart. Health confirms API-to-database connectivity. The regression
+tests exercise auth separately. This bounded workload measures the local
+machine and dataset, with no production capacity or long-duration guarantee.
