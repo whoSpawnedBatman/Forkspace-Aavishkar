@@ -1,0 +1,13 @@
+**
+!apps/
+!apps/backend/
+!apps/backend/*.py
+!apps/backend/migrations/
+!apps/backend/migrations/*.sql
+!apps/backend/requirements.txt
+!apps/backend/requirements-test.txt
+!apps/backend/tests/
+!apps/backend/tests/*.py
+!packages/
+!packages/contracts/
+!packages/contracts/openapi.yaml
