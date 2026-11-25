@@ -3,6 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import os
+import httpx
 import psycopg
 import pytest
 import yaml
@@ -122,7 +123,7 @@ def test_fork_edit_search_raw_embed_and_stars(backend):
         "starred": False,
     }
     with psycopg.connect(dsn) as db:
-        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (2,)
+        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (3,)
     for headers in ({}, owner, other):
         assert api.get(url + "/graph", headers=headers).json() == {
             "nodes": sorted(
@@ -143,6 +144,22 @@ def next_frame(lines):
             return "\n".join(frame)
         frame.append(line)
     raise AssertionError("Stream closed before frame")
+
+
+def test_private_viewer_access(backend):
+    api, owner, other, _ = backend
+    private = save(api, owner, visibility="private", title="Shared privately")
+    url = "/snippets/" + private
+    assert api.get(url, headers=other).status_code == 404
+    recipient = httpx.get("http://auth:9999/user", headers=other).json()["email"]
+    granted = api.put(url + "/access", headers=owner, json={"email": recipient})
+    assert granted.json() == {"email": recipient, "access": "viewer"}
+    assert api.get(url, headers=other).json()["title"] == "Shared privately"
+    assert private in [
+        item["id"]
+        for item in api.get("/snippets?scope=shared", headers=other).json()["items"]
+    ]
+    assert api.put(url, headers=other, json=sample()).status_code == 404
 
 
 def test_public_graph_live_updates_and_hidden_lineage(backend):

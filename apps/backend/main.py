@@ -26,7 +26,7 @@ from pygments.util import ClassNotFound
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import ValidationError
 
-from models import CreateSnippet
+from models import CreateSnippet, GrantAccess
 from database import connect, migrate
 
 
@@ -42,7 +42,7 @@ app.openapi_schema = yaml.safe_load(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ["FRONTEND_ORIGIN"]],
+    allow_origins=os.environ["FRONTEND_ORIGIN"].split(","),
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
@@ -166,13 +166,16 @@ def readable(db, id, user, *, owner=False, lock=False):
     predicate = (
         "s.owner_id = %s"
         if owner
-        else "(s.visibility IN ('public','unlisted') OR s.owner_id = %s)"
+        else """(s.visibility IN ('public','unlisted') OR s.owner_id = %s OR
+                 EXISTS (
+                    SELECT 1 FROM snippet_access a
+                    WHERE a.snippet_id=s.id AND a.user_id=%s))"""
     )
     row = db.execute(
         "SELECT s.* FROM snippets s WHERE s.id = %s AND "
         + predicate
         + (" FOR UPDATE" if lock else " FOR SHARE"),
-        (id, user),
+        (id, user) if owner else (id, user, user),
     ).fetchone()
     if row is None:
         raise problem(404, "not_found", "Snippet not found.")
@@ -215,19 +218,20 @@ SUMMARY = """SELECT s.id, s.title, s.tags, s.visibility, s.created_at, s.updated
 def list_snippets(
     user: Caller,
     response: Response,
-    scope: Literal["public", "mine"] = "public",
+    scope: Literal["public", "mine", "shared"] = "public",
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     tag: str | None = Query(None, min_length=1, max_length=32),
     q: str | None = Query(None, min_length=1, max_length=200),
 ):
-    if scope == "mine" and user is None:
+    if scope in ("mine", "shared") and user is None:
         raise unauthorized()
-    predicate = (
-        "WHERE s.visibility = 'public'"
-        if scope == "public"
-        else "WHERE s.owner_id = %s"
-    )
+    predicate = {
+        "public": "WHERE s.visibility = 'public'",
+        "mine": "WHERE s.owner_id = %s",
+        "shared": """WHERE s.visibility = 'private' AND EXISTS (
+            SELECT 1 FROM snippet_access a WHERE a.snippet_id=s.id AND a.user_id=%s)""",
+    }[scope]
     params = [user] if scope == "public" else [user, user]
     if tag is not None:
         predicate += " AND %s = ANY(s.tags)"
@@ -299,6 +303,25 @@ def fork_snippet(id: UUID, user: Caller):
     return {"id": fork_id}
 
 
+@app.put("/snippets/{id}/access")
+def grant_access(id: UUID, user: Caller, data: GrantAccess):
+    require_user(user)
+    with connect() as db:
+        snippet = readable(db, id, user, owner=True, lock=True)
+        if snippet["visibility"] != "private":
+            raise problem(400, "invalid_input", "Set visibility to private before granting access.")
+        recipient = db.execute(
+            "SELECT id FROM auth.users WHERE lower(email)=lower(%s)", (data.email,)
+        ).fetchone()
+        if recipient is None:
+            raise problem(404, "not_found", "No account exists for that email.")
+        db.execute(
+            "INSERT INTO snippet_access (snippet_id,user_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+            (id, recipient["id"]),
+        )
+    return {"email": data.email, "access": "viewer"}
+
+
 @app.get("/snippets/{id}/raw")
 def raw_file(
     id: UUID, user: Caller, path: str = Query(..., min_length=1, max_length=255)
@@ -321,7 +344,7 @@ def raw_file(
 
 
 @app.get("/embed/{id}", response_class=HTMLResponse)
-def embed(id: UUID, user: Caller):
+def embed(id: UUID, user: Caller, request: Request):
     # Embeds are always anonymous, including when an owner views one.
     with connect() as db:
         snippet = readable(db, id, None)
@@ -343,6 +366,15 @@ def embed(id: UUID, user: Caller):
             + highlight(file["content"], lexer, formatter)
             + "</section>"
         )
+    forwarded_host = request.headers.get("x-forwarded-host")
+    app_origin = (
+        request.headers.get("referer", "").split("/app")[0]
+        or (
+            request.headers.get("x-forwarded-proto", request.url.scheme)
+            + "://"
+            + (forwarded_host or request.headers.get("host", ""))
+        )
+    )
     html = (
         '<!doctype html><html lang="en"><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -352,6 +384,9 @@ def embed(id: UUID, user: Caller):
         + "</style><h1>"
         + escape(snippet["title"])
         + "</h1>"
+        + '<p><a target="_blank" rel="noopener noreferrer" href="'
+        + escape(app_origin.rstrip("/") + "/app?snippet=" + str(id))
+        + '">Open in workspace to fork</a></p>'
         + "".join(sections)
         + "</html>"
     )
@@ -360,7 +395,7 @@ def embed(id: UUID, user: Caller):
         headers={
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors *; sandbox",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors *; sandbox allow-popups allow-popups-to-escape-sandbox",
         },
     )
 
