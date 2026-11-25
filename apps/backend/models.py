@@ -70,3 +70,16 @@ class CreateSnippet(BaseModel):
         if len({file.path for file in files}) != len(files):
             raise ValueError("Duplicate file path")
         return files
+
+
+class GrantAccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def normalized_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        if "@" not in email:
+            raise ValueError("Expected an email address")
+        return email

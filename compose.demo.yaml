@@ -1,0 +1,43 @@
+name: snipbase-demo
+services:
+  db:
+    extends:
+      file: compose.yaml
+      service: db
+    volumes:
+      - ./apps/backend/tests/auth.sql:/docker-entrypoint-initdb.d/002_local_auth.sql:ro
+  auth:
+    extends:
+      file: compose.test.yaml
+      service: auth
+    environment:
+      API_EXTERNAL_URL: ${DEMO_ORIGIN:-http://localhost:3100}/auth/v1
+      GOTRUE_SITE_URL: ${DEMO_ORIGIN:-http://localhost:3100}
+      GOTRUE_URI_ALLOW_LIST: http://localhost:3100/**,http://172.16.0.51:3100/**,http://192.168.137.1:3100/**
+  api:
+    extends:
+      file: compose.yaml
+      service: api
+    ports: !override
+      - "127.0.0.1:8100:8000"
+    environment:
+      SUPABASE_AUTH_URL: http://auth:9999
+      SUPABASE_PUBLISHABLE_KEY: local-demo
+      FRONTEND_ORIGIN: ${DEMO_ORIGIN:-http://localhost:3100},http://localhost:3100
+    depends_on:
+      auth:
+        condition: service_healthy
+  web:
+    build: ./apps/frontend
+    ports:
+      - "0.0.0.0:3100:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+volumes:
+  db-data:

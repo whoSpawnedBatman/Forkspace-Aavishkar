@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Forkspace Backend
-  version: 0.2.0
+  version: 0.3.0
   description: Integration contract for B01 through B08. Phase 1 operations remain compatible.
 paths:
   /snippets:
@@ -57,9 +57,10 @@ paths:
       operationId: listSnippets
       summary: List public snippets or the signed-in user's library
       description: >
-        Public scope includes only public records for every caller. Mine requires
-        authentication and includes only the caller's records, across all three
-        visibilities. Apply the scope before pagination. Sort by created_at
+        Public scope includes only public records for every caller. Mine includes
+        only the caller's records. Shared includes private snippets explicitly
+        granted to the caller. Mine and shared require authentication. Apply the scope
+        before pagination. Sort by created_at
         descending, then id descending. An empty page returns items as [].
       security: [{}, { bearerAuth: [] }]
       parameters:
@@ -73,7 +74,7 @@ paths:
           schema: { type: string, minLength: 1, maxLength: 200 }
         - name: scope
           in: query
-          schema: { type: string, enum: [public, mine], default: public }
+          schema: { type: string, enum: [public, mine, shared], default: public }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
@@ -125,9 +126,9 @@ paths:
       operationId: readSnippet
       summary: Reopen the snippet and its files in saved order
       description: >
-        Anyone with the ID may open public and unlisted snippets. Only the
-        verified owner may open a private snippet. Guests and other users
-        receive the same 404 body as for an unknown ID.
+        Anyone with the ID may open public and unlisted snippets. A private
+        snippet is readable by its owner and explicitly granted viewers.
+        Other callers receive the same 404 body as for an unknown ID.
       security: [{}, { bearerAuth: [] }]
       parameters:
         - name: id
@@ -198,6 +199,43 @@ paths:
           content:
             text/plain; charset=utf-8:
               schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /snippets/{id}/access:
+    put:
+      operationId: grantSnippetAccess
+      summary: Grant one registered user viewer access to a private snippet
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email, maxLength: 320 }
+      responses:
+        '200':
+          description: The registered user can read and fork the private snippet.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [email, access]
+                properties:
+                  email: { type: string, format: email }
+                  access: { type: string, const: viewer }
+        '400':
+          description: The snippet must be private before access can be granted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Invalid' }
