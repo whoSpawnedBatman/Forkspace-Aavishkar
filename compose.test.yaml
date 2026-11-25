@@ -1,0 +1,34 @@
+services:
+  db:
+    volumes:
+      - ./apps/backend/tests/auth.sql:/docker-entrypoint-initdb.d/002_local_auth.sql:ro
+  auth:
+    image: supabase/gotrue:v2.198.0
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: http://auth:9999
+      GOTRUE_SITE_URL: http://localhost:5173
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:local-only@db/forkspace?search_path=auth
+      GOTRUE_JWT_SECRET: ${TEST_JWT_SECRET:?Generate a temporary test signing secret}
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9999/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  api:
+    build:
+      target: test
+    environment:
+      SUPABASE_AUTH_URL: http://auth:9999
+      SUPABASE_PUBLISHABLE_KEY: local-test
+    depends_on:
+      auth:
+        condition: service_healthy

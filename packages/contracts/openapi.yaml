@@ -1,0 +1,502 @@
+openapi: 3.1.0
+info:
+  title: Forkspace Backend
+  version: 0.2.0
+  description: Integration contract for B01 through B08. Phase 1 operations remain compatible.
+paths:
+  /snippets:
+    post:
+      operationId: createSnippet
+      summary: Save a snippet to the signed-in user's library
+      description: >
+        The verified session determines the owner. The snippet and every file
+        commit in one transaction. A failed transaction leaves no rows.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSnippet' }
+            example:
+              title: Local nginx
+              tags: [docker, nginx]
+              visibility: private
+              files:
+                - path: Dockerfile
+                  content: |
+                    FROM nginx:alpine
+                    COPY nginx.conf /etc/nginx/nginx.conf
+                - path: docker-compose.yml
+                  content: |
+                    services:
+                      web:
+                        build: .
+                - path: nginx.conf
+                  content: |
+                    events {}
+                    http { server { listen 80; } }
+      responses:
+        '201':
+          description: Returned after commit. Use id to reopen the saved snippet.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { $ref: '#/components/schemas/Id' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413':
+          description: JSON request body exceeds 1 MiB (1048576 bytes). Code payload_too_large.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+    get:
+      operationId: listSnippets
+      summary: List public snippets or the signed-in user's library
+      description: >
+        Public scope includes only public records for every caller. Mine requires
+        authentication and includes only the caller's records, across all three
+        visibilities. Apply the scope before pagination. Sort by created_at
+        descending, then id descending. An empty page returns items as [].
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - name: tag
+          in: query
+          description: Exact normalized tag, trimmed and lowercased. Combined with scope and q.
+          schema: { type: string, minLength: 1, maxLength: 32 }
+        - name: q
+          in: query
+          description: PostgreSQL simple full-text terms across title and all file contents. Terms use AND semantics. Combined with scope and tag.
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: scope
+          in: query
+          schema: { type: string, enum: [public, mine], default: public }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Page of summaries in the requested scope.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Summary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /snippets/{id}:
+    put:
+      operationId: replaceSnippet
+      summary: Replace the owner's snippet metadata and files atomically
+      description: >
+        Send the same complete body as create. Only the owner may edit.
+        The ID and parent relationship remain stable. Concurrent writes serialize
+        on the snippet row, with the last committed replacement winning.
+        Returns the ID after commit. Non-owners receive 404.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSnippet' }
+      responses:
+        '200': { $ref: '#/components/responses/Saved' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+    get:
+      operationId: readSnippet
+      summary: Reopen the snippet and its files in saved order
+      description: >
+        Anyone with the ID may open public and unlisted snippets. Only the
+        verified owner may open a private snippet. Guests and other users
+        receive the same 404 body as for an unknown ID.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/Id' }
+      responses:
+        '200':
+          description: Saved metadata and the exact file texts in submission order.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Summary' }
+                  - type: object
+                    required: [files]
+                    properties:
+                      files: { $ref: '#/components/schemas/Files' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Unknown ID or inaccessible private snippet.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: { code: not_found, message: Snippet not found. } }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /snippets/{id}/fork:
+    post:
+      operationId: forkSnippet
+      summary: Copy a readable snippet into a private independent fork
+      description: >
+        No request body. Copies title, tags and exact files in one transaction
+        using the verified caller as owner. Source access is checked while locked.
+        Returns a new ID after commit. Use PUT to edit or publish the fork.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      responses:
+        '201': { $ref: '#/components/responses/Saved' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /snippets/{id}/raw:
+    get:
+      operationId: readRawFile
+      summary: Read one exact file as plain text
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+        - name: path
+          in: query
+          required: true
+          description: Exact saved normalized file path. URL-encode the query value.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      responses:
+        '200':
+          description: Exact stored text. Parent snippet read permission applies.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            text/plain; charset=utf-8:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /embed/{id}:
+    get:
+      operationId: embedSnippet
+      summary: Embeddable read-only HTML with escaped highlighted files
+      description: >
+        Use the API origin plus this path as the iframe src. Public and unlisted
+        snippets are allowed. Private snippets return 404 even for their owner.
+        No scripts run in the embed. Responses allow external framing.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      responses:
+        '200':
+          description: Title and all files in saved order with detected syntax highlighting.
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            text/html:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /snippets/{id}/star:
+    get:
+      operationId: readStarState
+      summary: Read the star count and the caller's saved star state
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      responses:
+        '200':
+          description: State for a readable snippet. Guests always receive starred false.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, starred]
+                properties:
+                  count: { type: integer, minimum: 0 }
+                  starred: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+    put:
+      operationId: starSnippet
+      summary: Idempotently star a readable snippet
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      responses:
+        '200': { $ref: '#/components/responses/Starred' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+    delete:
+      operationId: unstarSnippet
+      summary: Idempotently unstar a readable snippet
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      responses:
+        '200': { $ref: '#/components/responses/Starred' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /snippets/{id}/graph:
+    get:
+      operationId: readForkGraph
+      summary: Read connected public fork lineage
+      description: >
+        The root must be public. Nodes include the connected ancestors,
+        descendants and siblings reachable through public nodes.
+        Hidden nodes and paths through them are excluded.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      responses:
+        '200':
+          description: Public node and edge snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Graph' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /snippets/{id}/events:
+    get:
+      operationId: watchForkGraph
+      summary: Public graph invalidations over server-sent events
+      description: >
+        Use EventSource at the API origin. First connection and reconnect emit
+        graph_changed with empty JSON data. Refetch the graph on that event.
+        Committed public graph changes are detected about once per second.
+        Hidden forks produce no graph_changed event. Comments keep the stream alive.
+        If the root becomes hidden, unavailable is emitted and the stream closes.
+        Close EventSource on unavailable. History and Last-Event-ID replay are
+        replaced by a fresh graph fetch on reconnect.
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SnippetId' }
+      responses:
+        '200':
+          description: graph_changed or unavailable events with data {}.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '500': { $ref: '#/components/responses/Failure' }
+  /health:
+    get:
+      operationId: health
+      summary: Confirm the API can reach PostgreSQL
+      responses:
+        '200':
+          description: Database reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+        '500': { $ref: '#/components/responses/Failure' }
+components:
+  parameters:
+    SnippetId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Send the signed-in user's Supabase Auth access token.
+        The backend verifies it against the configured auth project and derives
+        ownership from its verified subject. An invalid supplied token returns
+        401 even on operations that allow guests.
+  headers:
+    NoStore:
+      required: true
+      schema: { type: string, const: no-store }
+  schemas:
+    Id: { type: string, format: uuid }
+    Title:
+      type: string
+      description: Trim surrounding whitespace and require 1 to 120 Unicode characters after trimming.
+    Visibility: { type: string, enum: [public, unlisted, private] }
+    Tags:
+      type: array
+      maxItems: 10
+      description: >
+        Trim and lowercase each tag, then require 1 to 32 characters.
+        Keep the first occurrence of each normalized value in input order.
+      items: { type: string }
+    Files:
+      type: array
+      minItems: 1
+      maxItems: 20
+      description: Preserve input order. Reject duplicate normalized paths (case-sensitive).
+      items:
+        type: object
+        additionalProperties: false
+        required: [path, content]
+        properties:
+          path:
+            type: string
+            description: >
+              Reject control characters. Trim surrounding whitespace and convert
+              backslashes to forward slashes. Require a relative path of 1 to 255
+              characters. Reject drive prefixes, leading slashes and segments
+              that are empty, a single dot or a double dot.
+          content:
+            type: string
+            description: Exact text including line endings. Empty text is valid. Maximum 262144 UTF-8 bytes per file.
+    CreateSnippet:
+      type: object
+      additionalProperties: false
+      description: Reject U+0000 and invalid Unicode scalar values in text fields. Maximum JSON body size is 1 MiB.
+      required: [title, files, visibility]
+      properties:
+        title: { $ref: '#/components/schemas/Title' }
+        tags:
+          $ref: '#/components/schemas/Tags'
+          default: []
+        visibility: { $ref: '#/components/schemas/Visibility' }
+        files: { $ref: '#/components/schemas/Files' }
+    Summary:
+      type: object
+      required: [id, title, tags, visibility, file_count, created_at]
+      properties:
+        updated_at: { type: string, format: date-time }
+        parent_snippet_id:
+          type: [string, 'null']
+          format: uuid
+          description: Parent ID when public or owned by the caller. Otherwise null.
+        id: { $ref: '#/components/schemas/Id' }
+        title: { $ref: '#/components/schemas/Title' }
+        tags: { $ref: '#/components/schemas/Tags' }
+        visibility: { $ref: '#/components/schemas/Visibility' }
+        file_count: { type: integer, minimum: 1, maximum: 20 }
+        created_at: { type: string, format: date-time }
+    Graph:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, title]
+            properties:
+              id: { $ref: '#/components/schemas/Id' }
+              title: { type: string }
+        edges:
+          type: array
+          items:
+            type: object
+            required: [parent_id, child_id]
+            properties:
+              parent_id: { $ref: '#/components/schemas/Id' }
+              child_id: { $ref: '#/components/schemas/Id' }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, enum: [unauthorized, not_found, invalid_input, payload_too_large, service_error, method_not_allowed] }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field: { type: string, description: Dot-separated field path with zero-based array indices. }
+                  message: { type: string }
+  responses:
+    Saved:
+      description: Stable ID returned after the transaction commits.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id]
+            properties:
+              id: { $ref: '#/components/schemas/Id' }
+    Starred:
+      description: Committed star state. PUT returns true and DELETE returns false.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [starred]
+            properties:
+              starred: { type: boolean }
+    NotFound:
+      description: Missing or inaccessible resource. Code not_found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooLarge:
+      description: JSON body exceeds 1 MiB. Code payload_too_large.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing required session or invalid supplied session. Code unauthorized.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Invalid:
+      description: Invalid body or parameter. Code invalid_input. Include details for field errors.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: invalid_input
+              message: Invalid snippet.
+              details: [{ field: files.1.path, message: Duplicate file path. }]
+    Failure:
+      description: Service failure. Code service_error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
