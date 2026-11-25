@@ -131,3 +131,175 @@ service_error. Starting it again restored HTTP 200 and status ok without an
 API restart. Health confirms API-to-database connectivity. The regression
 tests exercise auth separately. This bounded workload measures the local
 machine and dataset, with no production capacity or long-duration guarantee.
+
+## Backend architecture for beginners
+
+Forkspace has one FastAPI application and one PostgreSQL database. The frontend
+does not connect to PostgreSQL directly. It calls HTTP endpoints, and the API
+decides what the caller may read or change before it touches the database.
+
+    Browser
+      |
+      | Supabase session access token
+      v
+    Next.js frontend
+      |
+      | Authorization: Bearer <token>
+      v
+    FastAPI API
+      |-- verifies the token with Supabase Auth
+      |-- validates the request with Pydantic
+      |-- checks public, unlisted, private and owner permissions
+      |-- reads or writes PostgreSQL
+          |-- snippets
+          |-- snippet_files
+          |-- snippet_stars
+          |-- schema_migrations
+
+The important trust rule is that the frontend never tells the backend who owns
+a snippet. The backend gets the user ID from the verified Supabase token and
+uses that ID as owner_id. A client cannot save a snippet for someone else by
+adding an owner_id field to the request.
+
+### What each backend file does
+
+| File | Purpose |
+| --- | --- |
+| apps/backend/main.py | FastAPI routes, authentication, permissions, embeds and SSE. |
+| apps/backend/models.py | Validation for titles, tags, paths, files and visibility. |
+| apps/backend/database.py | PostgreSQL connection and startup migration runner. |
+| apps/backend/migrations/001_snippets.sql | Original snippet and file tables. |
+| apps/backend/migrations/002_features.sql | Fork lineage, timestamps and stars. |
+| apps/backend/seed.py | Creates safe demo snippets through the API. |
+| apps/backend/tests/ | Regression, contract and load tests. |
+| apps/backend/Dockerfile | Python 3.12 API image running as user app. |
+| compose.yaml | Regular local PostgreSQL and API services. |
+| compose.test.yaml | Isolated local Supabase Auth test service. |
+| packages/contracts/openapi.yaml | The frontend and backend integration contract. |
+
+### How a save works
+
+The frontend sends one JSON request containing a title, tags, visibility and
+the ordered file list.
+
+    {
+      "title": "Local nginx",
+      "tags": ["docker", "nginx"],
+      "visibility": "public",
+      "files": [
+        {"path": "Dockerfile", "content": "FROM nginx:alpine"},
+        {"path": "nginx.conf", "content": "events {}"}
+      ]
+    }
+
+FastAPI validates the request first. The API then inserts the parent snippet
+and all file rows inside one PostgreSQL transaction. The connection context
+commits only when every insert succeeds. If one file fails, PostgreSQL rolls
+back the snippet and earlier file inserts together. The API returns the ID only
+after the commit succeeds.
+
+### How visibility works
+
+| Visibility | Public list | Direct read | Owner read |
+| --- | --- | --- | --- |
+| public | Included | Everyone | Yes |
+| unlisted | Excluded | Anyone with the ID | Yes |
+| private | Excluded | Owner only | Yes |
+
+The same permission rule is applied to details, raw files, embeds, forks,
+stars and graph access. An inaccessible private record returns the same 404
+shape as an unknown record, so its existence is not disclosed.
+
+### How login connects to the API
+
+The frontend signs in with Supabase Auth. Supabase returns a session containing
+an access token. The frontend sends that token with each protected API request.
+The backend calls Supabase Auth's user endpoint to verify the token. It then
+uses the verified UUID for owner checks.
+
+The frontend needs these public variable names in its local environment file.
+
+    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+    NEXT_PUBLIC_API_URL=http://localhost:8000
+
+The backend needs these variable names in its local environment file.
+
+    DATABASE_URL=postgresql://postgres:local-only@db/forkspace
+    SUPABASE_AUTH_URL=https://your-project.supabase.co/auth/v1
+    SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+    FRONTEND_ORIGIN=http://localhost:3000
+
+Secret keys belong in server secret storage. They must never appear in frontend
+environment variables, browser code, Git, screenshots or documentation.
+
+### How the judging flow maps to endpoints
+
+| User action | Backend call | Expected result |
+| --- | --- | --- |
+| Sign in | Supabase Auth in frontend | Access token available. |
+| Save files | POST /snippets | 201 with a new snippet ID. |
+| Reopen after refresh | GET /snippets/{id} | Metadata and exact ordered files. |
+| Copy embed link | Build /embed/{id} | Public or unlisted read-only HTML. |
+| Fork as user B | POST /snippets/{id}/fork | New private snippet ID owned by B. |
+| Edit the fork | PUT /snippets/{fork_id} | Complete replacement committed atomically. |
+| Publish the fork | Same PUT with visibility public | Fork enters public discovery. |
+| Search by tag | GET /snippets?tag=docker | Public matching snippets only. |
+
+### What the frontend should do
+
+The frontend should keep the Supabase session and attach its current access
+token through one shared API helper. It should use the returned ID after create,
+refresh the detail endpoint after navigation, and show the API error code,
+message and optional field details.
+
+For the demo, use this order:
+
+1. Sign in as user A.
+2. Create a public three-file snippet tagged docker.
+3. Read the returned ID and show the saved snippet.
+4. Copy the /embed/{id} URL.
+5. Sign in as user B.
+6. Fork the original.
+7. Edit the fork and set visibility to public.
+8. Search docker and show the fork.
+
+The API already supports the backend side of this sequence. Frontend work
+remains responsible for screens, session state, Monaco editing, React Flow
+rendering and user-facing loading and error states.
+
+### Common status codes
+
+| Status | Meaning |
+| --- | --- |
+| 200 | Read or update completed. |
+| 201 | A snippet or fork was committed and its ID is returned. |
+| 401 | A required token is missing or invalid. |
+| 404 | The ID is missing or the resource is hidden from this caller. |
+| 413 | The JSON body is larger than 1 MiB. |
+| 422 | Request validation failed. |
+| 500 | PostgreSQL or an identity provider dependency is unavailable. |
+
+### Why Redis and pgvector are not required for the demo
+
+The requested judging flow only needs PostgreSQL filtering and full-text
+search. The current implementation computes the search vector from the saved
+title and files. Redis and pgvector can be added later if measurement shows
+that the dataset needs them. They are not required for create, fork, edit and
+tag search.
+
+### Troubleshooting
+
+If the API does not start, check docker compose logs api and then run:
+
+    Invoke-RestMethod http://localhost:8000/health
+    docker compose ps
+
+If every protected request returns 401, inspect the browser token and confirm
+that the backend SUPABASE_AUTH_URL and publishable key belong to the same
+Supabase project as the frontend. If the browser reports a CORS error, set
+FRONTEND_ORIGIN to the exact frontend origin, including its port.
+
+If a user can log in but cannot save, check that the frontend sends
+Authorization: Bearer <access_token> and that the request body follows
+packages/contracts/openapi.yaml version 0.2.0.
