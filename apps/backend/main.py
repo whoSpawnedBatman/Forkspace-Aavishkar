@@ -131,14 +131,14 @@ def caller(request: Request) -> UUID | None:
         or not parts[1].isprintable()
     ):
         raise unauthorized()
-    result = httpx.get(
-        f"{AUTH_URL}/user",
-        headers={
-            "apikey": PUBLISHABLE_KEY,
-            "Authorization": f"Bearer {parts[1]}",
-        },
-        timeout=5,
-    )
+    with httpx.Client(timeout=5, trust_env=False) as client:
+        result = client.get(
+            f"{AUTH_URL}/user",
+            headers={
+                "apikey": PUBLISHABLE_KEY,
+                "Authorization": f"Bearer {parts[1]}",
+            },
+        )
     if result.status_code in (400, 401, 403):
         raise unauthorized()
     if result.status_code != 200:
@@ -162,7 +162,7 @@ async def read_body(request: Request) -> CreateSnippet:
         body.extend(chunk)
     data = CreateSnippet.model_validate_json(body)
     try:
-        async with httpx.AsyncClient(timeout=2) as client:
+        async with httpx.AsyncClient(timeout=2, trust_env=False) as client:
             response = await client.post(
                 os.environ.get("WATCHDOG_URL", "http://watchdog:9000") + "/scan",
                 json={"files": [file.model_dump() for file in data.files]},
@@ -242,7 +242,7 @@ def create_snippet(user: Caller, data: Annotated[CreateSnippet, Depends(read_bod
     snippet_id = uuid4()
     with connect() as db:
         db.execute(
-            "INSERT INTO snippets (id, owner_id, title, description, tags, visibility, link_expires_at) VALUES (%s,%s,%s,%s,%s,%s, CASE WHEN %s IS NULL THEN NULL ELSE clock_timestamp() + %s END)",
+            "INSERT INTO snippets (id, owner_id, title, description, tags, visibility, link_expires_at) VALUES (%s,%s,%s,%s,%s,%s, CASE WHEN %s::interval IS NULL THEN NULL ELSE clock_timestamp() + %s::interval END)",
             (snippet_id, user, data.title, data.description, data.tags, data.visibility, expiry_for(data.link_expiry), expiry_for(data.link_expiry)),
         )
         save_files(db, snippet_id, data.files)
@@ -410,7 +410,7 @@ def replace_snippet(
     with connect() as db:
         readable(db, id, user, owner=True, lock=True)
         db.execute(
-            "UPDATE snippets SET title=%s, description=%s, tags=%s, visibility=%s, link_expires_at=CASE WHEN %s IS NULL THEN NULL ELSE clock_timestamp() + %s END, updated_at=clock_timestamp() WHERE id=%s",
+            "UPDATE snippets SET title=%s, description=%s, tags=%s, visibility=%s, link_expires_at=CASE WHEN %s::interval IS NULL THEN NULL ELSE clock_timestamp() + %s::interval END, updated_at=clock_timestamp() WHERE id=%s",
             (data.title, data.description, data.tags, data.visibility, expiry_for(data.link_expiry), expiry_for(data.link_expiry), id),
         )
         db.execute("DELETE FROM snippet_files WHERE snippet_id=%s", (id,))
@@ -521,7 +521,9 @@ def embed(id: UUID, user: Caller, request: Request):
             + escape(file["path"])
             + f' <span style="font-size:12px;font-weight:500;color:#64748b;background:#f1f5f9;padding:2px 8px;border-radius:999px;margin-left:8px">{escape(lexer.name)}</span>'
             + "</h2>"
+            + '<div style="overflow:auto;margin:0;padding:12px 14px;border:1px solid #29384c;border-radius:8px;background:#101722;color:#eef4ff">'
             + code_html
+            + "</div>"
             + "</section>"
         )
     origins = [origin.rstrip("/") for origin in os.environ["FRONTEND_ORIGIN"].split(",")]
@@ -531,7 +533,7 @@ def embed(id: UUID, user: Caller, request: Request):
         '<!doctype html><html lang="en"><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         "<title>" + escape(snippet["title"]) + "</title><style>"
-        "body{font:16px system-ui;margin:24px}h2{font-size:16px;margin:18px 0 8px}pre{overflow:auto;margin:0;padding:10px 12px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc}"
+        "body{font:16px system-ui;margin:24px;color:#172033;background:#f7f8fb}h1{font-size:24px}h2{font-size:16px;margin:18px 0 8px}pre{overflow:auto;margin:0;padding:10px 12px;border:0;border-radius:6px;background:transparent;color:#eef4ff}"
         + formatter.get_style_defs(".highlight")
         + "</style><h1>"
         + escape(snippet["title"])
@@ -660,3 +662,5 @@ def health():
     with connect() as db:
         db.execute("SELECT 1")
     return {"status": "ok"}
+
+

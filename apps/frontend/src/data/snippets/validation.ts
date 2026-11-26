@@ -59,6 +59,22 @@ export function normalizePath(rawPath: string): string {
   return rawPath.trim().replace(/\\/g, '/');
 }
 
+export function detectLanguage(path: string, text: string): string {
+  const named = detectLanguageFromPath(path);
+  if (named !== 'text') return named;
+  const sample = text.slice(0, 8000);
+  if (/^\s*(?:<!doctype html|<html|<div|<script)\b/im.test(sample)) return 'html';
+  if (/^\s*(?:def \w+\(|from \w+ import )/m.test(sample)) return 'python';
+  if (/\b(?:interface \w+\s*\{|type \w+\s*=)/.test(sample)) return 'typescript';
+  if (/\b(?:const|let|function)\s+\w+/.test(sample)) return 'javascript';
+  if (/^\s*(?:SELECT .+ FROM|CREATE TABLE|INSERT INTO)\b/im.test(sample)) return 'sql';
+  if (/^\s*FROM\s+\S+/m.test(sample)) return 'dockerfile';
+  if (/^#!.*\b(?:bash|sh)\b/.test(sample)) return 'bash';
+  if (/^\s*package \w+/m.test(sample) && /\bfunc\s/.test(sample)) return 'go';
+  if (/\bfn\s+\w+\s*\(/.test(sample)) return 'rust';
+  return 'text';
+}
+
 export function validateNormalizedPath(rawPath: string): string | null {
   const trimmed = rawPath.trim();
   if (!trimmed) {
@@ -175,7 +191,7 @@ export function validateSnippetDraft(draft: SnippetDraft): ValidatedDraftResult 
 
     normalizedFiles.push({
       path: normalized,
-      language: detectLanguageFromPath(normalized),
+      language: detectLanguage(normalized, file.text),
       text: file.text,
     });
     if (new TextEncoder().encode(file.text).byteLength > MAX_FILE_BYTES) {

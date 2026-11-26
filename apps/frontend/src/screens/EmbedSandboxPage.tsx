@@ -174,7 +174,7 @@ export function EmbedSandboxPage() {
                 'rounded-[6px] border px-2.5 py-1 text-xs transition-colors cursor-pointer whitespace-nowrap',
                 activeSnippetId === item.id
                   ? 'border-[var(--action)] bg-[var(--selected-tint)] font-semibold text-[var(--action-bright)]'
-                  : 'border-[var(--hairline)] bg-[var(--code-surface)] text-[var(--secondary-text)] hover:border-[var(--control-border)] hover:text-[var(--ink)]',
+                  : 'border-[var(--code-border)] bg-[var(--code-surface)] text-[var(--code-ink)] hover:border-[var(--action)] hover:text-white',
               )}
             >
               {item.title} ({item.visibility})
@@ -187,7 +187,7 @@ export function EmbedSandboxPage() {
               'inline-flex items-center gap-1 rounded-[6px] border px-2.5 py-1 text-xs transition-colors cursor-pointer whitespace-nowrap',
               activeSnippetId === 'rate-limit-draft'
                 ? 'border-[var(--action)] bg-[var(--selected-tint)] font-semibold text-[var(--action-bright)]'
-                : 'border-[var(--hairline)] bg-[var(--code-surface)] text-[var(--secondary-text)] hover:border-[var(--control-border)] hover:text-[var(--ink)]',
+                : 'border-[var(--code-border)] bg-[var(--code-surface)] text-[var(--code-ink)] hover:border-[var(--action)] hover:text-white',
             )}
           >
             <Lock className="h-3 w-3" aria-hidden="true" />

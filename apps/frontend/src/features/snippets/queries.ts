@@ -5,6 +5,7 @@ import {
   isSnippetAdapterError,
   type LibraryScope,
   type SnippetDraft,
+  type Snippet,
 } from '@/src/data/snippets/domain';
 import { useSnippetsContext } from './context';
 
@@ -81,7 +82,7 @@ export function useCreateSnippet() {
   return useMutation({
     retry: false,
     mutationFn: (draft: SnippetDraft) => adapter.create(draft, viewer),
-    onSuccess: (receipt) => {
+    onSuccess: (receipt, draft) => {
       queryClient.invalidateQueries({ queryKey: snippetKeys.all(adapter.mode, viewer.id) });
       if (receipt.snippet) {
         queryClient.setQueryData(
@@ -100,13 +101,17 @@ export function useUpdateSnippet(id: string) {
   return useMutation({
     retry: false,
     mutationFn: (draft: SnippetDraft) => adapter.update(id, draft, viewer),
-    onSuccess: (receipt) => {
+    onSuccess: (receipt, draft) => {
       queryClient.invalidateQueries({ queryKey: snippetKeys.all(adapter.mode, viewer.id) });
       if (receipt.snippet) {
         queryClient.setQueryData(
           snippetKeys.detail(adapter.mode, viewer.id, receipt.id, false),
           receipt.snippet,
         );
+      } else {
+        const key = snippetKeys.detail(adapter.mode, viewer.id, id, false);
+        const current = queryClient.getQueryData<Snippet>(key);
+        if (current) queryClient.setQueryData(key, { ...current, title: draft.title, description: draft.description, tags: draft.tags, visibility: draft.visibility });
       }
     },
   });
@@ -151,7 +156,23 @@ export function useToggleStar() {
   return useMutation({
     retry: false,
     mutationFn: (id: string) => adapter.toggleStar(id, viewer),
-    onSuccess: () => {
+    onMutate: async (id) => {
+      const key = snippetKeys.detail(adapter.mode, viewer.id, id, false);
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<Snippet>(key);
+      if (previous) {
+        queryClient.setQueryData<Snippet>(key, {
+          ...previous,
+          viewerHasStarred: !previous.viewerHasStarred,
+          starCount: previous.starCount + (previous.viewerHasStarred ? -1 : 1),
+        });
+      }
+      return { key, previous };
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previous) queryClient.setQueryData(context.key, context.previous);
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: snippetKeys.all(adapter.mode, viewer.id) });
     },
   });

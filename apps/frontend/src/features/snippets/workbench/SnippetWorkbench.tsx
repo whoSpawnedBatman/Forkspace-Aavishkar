@@ -50,6 +50,7 @@ import {
 } from '@/src/data/snippets/domain';
 import {
   detectLanguageFromPath,
+  detectLanguage,
   normalizeTag,
   validateSnippetDraft,
 } from '@/src/data/snippets/validation';
@@ -113,13 +114,15 @@ interface SnippetWorkbenchProps {
   mode: 'create' | 'detail';
   snippet?: Snippet;
   initialView?: 'edit' | 'highlighted';
+  initialFiles?: ReadonlyArray<{ path: string; text: string }>;
 }
 
 function makeFileId(): string {
   return `f-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function buildInitialFiles(snippet?: Snippet): DraftFileState[] {
+function buildInitialFiles(snippet?: Snippet, initialFiles?: ReadonlyArray<{ path: string; text: string }>): DraftFileState[] {
+  if (initialFiles?.length) return initialFiles.map((file) => ({ id: makeFileId(), path: file.path, language: detectLanguageFromPath(file.path), text: file.text }));
   if (snippet && snippet.files.length > 0) {
     return snippet.files.map((file) => ({
       id: makeFileId(),
@@ -237,6 +240,7 @@ export function SnippetWorkbench({
   mode,
   snippet,
   initialView,
+  initialFiles,
 }: SnippetWorkbenchProps) {
   const { viewer, announce } = useSnippetsContext();
   const prefersReducedMotion = useReducedMotion();
@@ -260,7 +264,7 @@ export function SnippetWorkbench({
     snippet ? [...snippet.tags] : [],
   );
   const [tagDraft, setTagDraft] = React.useState('');
-  const [files, setFiles] = React.useState<DraftFileState[]>(() => buildInitialFiles(snippet));
+  const [files, setFiles] = React.useState<DraftFileState[]>(() => buildInitialFiles(snippet, initialFiles));
   const [activeFileId, setActiveFileId] = React.useState<string>('');
 
   const [viewMode, setViewMode] = React.useState<'edit' | 'highlighted'>(() => {
@@ -270,7 +274,7 @@ export function SnippetWorkbench({
   });
 
   const [usePlainTextarea, setUsePlainTextarea] = React.useState<boolean>(() =>
-    typeof window !== 'undefined' ? window.innerWidth < 640 : false,
+    true,
   );
   const [monacoFailed, setMonacoFailed] = React.useState(false);
 
@@ -337,7 +341,7 @@ export function SnippetWorkbench({
   // Re-initialize form state whenever snippet identity or updatedAt changes
   const snippetIdentityKey = mode === 'create' ? 'new' : `${snippet?.id}:${snippet?.updatedAt}`;
   React.useEffect(() => {
-    const nextFiles = buildInitialFiles(snippet);
+    const nextFiles = buildInitialFiles(snippet, initialFiles);
     setTitle(snippet?.title ?? '');
     setDescription(snippet?.description ?? '');
     setVisibility(snippet?.visibility ?? 'private');
@@ -360,7 +364,7 @@ export function SnippetWorkbench({
     setFeedback(null);
     setIsDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snippetIdentityKey, mode, snippet?.canEdit]);
+  }, [snippetIdentityKey, mode, snippet?.canEdit, initialFiles]);
 
   // Keep activeFileId valid
   const activeFile = React.useMemo(
@@ -473,7 +477,7 @@ export function SnippetWorkbench({
 
   const updateFileText = React.useCallback((fileId: string, nextText: string) => {
     setFiles((prev) =>
-      prev.map((file) => (file.id === fileId ? { ...file, text: nextText } : file)),
+      prev.map((file) => (file.id === fileId ? { ...file, text: nextText, language: detectLanguage(file.path, nextText) } : file)),
     );
     setIsDirty(true);
   }, []);
@@ -678,6 +682,10 @@ export function SnippetWorkbench({
   const rawUrl =
     mode === 'detail' && snippet && activeFile
       ? `/raw/${encodeURIComponent(snippet.id)}?file=${encodeURIComponent(activeFile.path)}`
+      : undefined;
+  const downloadUrl =
+    mode === 'detail' && snippet && activeFile
+      ? `${apiOrigin}/snippets/${encodeURIComponent(snippet.id)}/raw?path=${encodeURIComponent(activeFile.path)}`
       : undefined;
 
   const pendingRemoveFile = pendingRemoveFileId
@@ -1428,6 +1436,14 @@ export function SnippetWorkbench({
                       <ExternalLink className="h-3 w-3" aria-hidden="true" />
                       Raw
                     </Link>
+                  </Button>
+                )}
+                {downloadUrl && (
+                  <Button asChild variant="code" size="sm" className="h-7 px-2 text-[11px]">
+                    <a href={downloadUrl} download={activeFile?.path.split('/').pop()}>
+                      <Save className="h-3 w-3" aria-hidden="true" />
+                      Download
+                    </a>
                   </Button>
                 )}
               </div>
