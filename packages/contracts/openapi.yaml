@@ -74,7 +74,7 @@ paths:
           schema: { type: string, minLength: 1, maxLength: 200 }
         - name: scope
           in: query
-          schema: { type: string, enum: [public, mine, shared], default: public }
+          schema: { type: string, enum: [public, mine, shared, starred], default: public }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
@@ -277,9 +277,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [count, starred]
+                required: [star_count, starred]
                 properties:
-                  count: { type: integer, minimum: 0 }
+                  star_count: { type: integer, minimum: 0 }
                   starred: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -431,6 +431,8 @@ components:
       required: [title, files, visibility]
       properties:
         title: { $ref: '#/components/schemas/Title' }
+        description: { type: string, maxLength: 2000 }
+
         tags:
           $ref: '#/components/schemas/Tags'
           default: []
@@ -440,6 +442,7 @@ components:
       type: object
       required: [id, title, tags, visibility, file_count, created_at]
       properties:
+        owner_id: { type: string, format: uuid }
         updated_at: { type: string, format: date-time }
         parent_snippet_id:
           type: [string, 'null']
@@ -447,9 +450,14 @@ components:
           description: Parent ID when public or owned by the caller. Otherwise null.
         id: { $ref: '#/components/schemas/Id' }
         title: { $ref: '#/components/schemas/Title' }
+        description: { type: string, maxLength: 2000 }
+
         tags: { $ref: '#/components/schemas/Tags' }
         visibility: { $ref: '#/components/schemas/Visibility' }
         file_count: { type: integer, minimum: 1, maximum: 20 }
+        file_paths: { type: array, items: { type: string } }
+        star_count: { type: integer, minimum: 0 }
+        starred: { type: boolean }
         created_at: { type: string, format: date-time }
     Graph:
       type: object

@@ -3,6 +3,30 @@
 Rishi's integration contract is `packages/contracts/openapi.yaml`, version `0.2.0`.
 The API serves that same document at `/openapi.json` and Swagger UI at `/docs`.
 
+## Integrated UI verification · 26 November 2026
+
+The imported workspace UI now uses the live API and Supabase session. The local
+production demo runs at `http://localhost:3100` through `start-demo.ps1`.
+Migration 005 adds descriptions without replacing existing snippet data.
+Summary responses include owner identity, ordered file paths, and persisted star
+state; `scope=starred` applies the same read permissions as snippet details.
+
+Verified with two separate browser accounts: account creation, rejected empty
+title, three-file Monaco creation, exact saved file contents and description,
+refresh, star and starred library, anonymous iframe rendering, raw text headers,
+private-fork denial, authenticated private raw reads, independent fork ownership
+and edits, publication, combined tag/text discovery, and public fork graph.
+A title change from the second account appeared in the first account's graph
+without refreshing. Event streams send `Cache-Control: no-store, no-transform`
+so the Next.js proxy does not gzip and buffer live updates.
+Embed return links use a configured frontend origin for both sandbox and external
+referrers. Sign-in can return to the requested snippet URL.
+
+Validation: nine backend acceptance tests passed, the targeted embed-link
+regression and live-graph regression passed after their final fixes, Ruff passed, TypeScript passed, and the
+Docker frontend production build completed. Both demo services report healthy.
+Hosted authentication and cloud deployment were not changed or verified in this run.
+
 ## Start locally
 
 Run from the repository root with Docker Desktop running. For first-time setup:

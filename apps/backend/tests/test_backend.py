@@ -64,6 +64,10 @@ def test_fork_edit_search_raw_embed_and_stars(backend):
     )
     assert "x-frame-options" not in html.headers
     assert all(file["path"] in html.text for file in files)
+    origin = os.environ["FRONTEND_ORIGIN"].split(",")[0].rstrip("/")
+    for referer in (origin + "/sandbox?snippet=" + original, "https://external.example/docs"):
+        embed = api.get("/embed/" + original, headers={"Referer": referer})
+        assert f'href="{origin}/app?snippet={original}"' in embed.text
 
     fork = api.post(url + "/fork", headers=other).json()["id"]
     fork_url = "/snippets/" + fork
@@ -103,27 +107,27 @@ def test_fork_edit_search_raw_embed_and_stars(backend):
     for _ in range(2):
         assert api.put(fork_url + "/star", headers=owner).json() == {"starred": True}
     assert api.get(fork_url + "/star", headers=owner).json() == {
-        "count": 1,
+        "star_count": 1,
         "starred": True,
     }
-    assert api.get(fork_url + "/star").json() == {"count": 1, "starred": False}
+    assert api.get(fork_url + "/star").json() == {"star_count": 1, "starred": False}
     # Concurrent duplicate stars still leave one row per user.
     with ThreadPoolExecutor(4) as pool:
         results = list(
             pool.map(lambda _: api.put(fork_url + "/star", headers=other), range(4))
         )
     assert all(r.status_code == 200 for r in results)
-    assert api.get(fork_url + "/star", headers=other).json()["count"] == 2
+    assert api.get(fork_url + "/star", headers=other).json()["star_count"] == 2
     for _ in range(2):
         assert api.delete(fork_url + "/star", headers=owner).json() == {
             "starred": False
         }
     assert api.get(fork_url + "/star", headers=owner).json() == {
-        "count": 1,
+        "star_count": 1,
         "starred": False,
     }
     with psycopg.connect(dsn) as db:
-        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (4,)
+        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (5,)
     for headers in ({}, owner, other):
         assert api.get(url + "/graph", headers=headers).json() == {
             "nodes": sorted(
@@ -144,6 +148,25 @@ def next_frame(lines):
             return "\n".join(frame)
         frame.append(line)
     raise AssertionError("Stream closed before frame")
+
+
+def test_new_ui_metadata_and_starred_scope(backend):
+    api, owner, other, _ = backend
+    snippet = save(api, owner, visibility="public", description="Real saved description")
+    url = "/snippets/" + snippet
+    detail = api.get(url, headers=owner).json()
+    assert detail["description"] == "Real saved description"
+    assert detail["owner_id"]
+    assert api.get("/snippets?scope=starred").status_code == 401
+    assert api.put(url + "/star", headers=other).status_code == 200
+    starred = api.get("/snippets?scope=starred", headers=other).json()["items"][0]
+    assert starred["star_count"] == 1 and starred["starred"] is True
+    assert starred["file_paths"] == [file["path"] for file in sample()["files"]]
+    assert [row["id"] for row in api.get("/snippets?scope=starred", headers=other).json()["items"]] == [snippet]
+    fork = api.post(url + "/fork", headers=other).json()["id"]
+    assert api.get("/snippets/" + fork, headers=other).json()["description"] == detail["description"]
+    assert api.put(url, headers=owner, json=dict(sample(), visibility="private", description="Updated")).status_code == 200
+    assert api.get("/snippets?scope=starred", headers=other).json()["items"] == []
 
 
 def test_private_viewer_access(backend):
@@ -195,6 +218,7 @@ def test_public_graph_live_updates_and_hidden_lineage(backend):
             "text/event-stream"
         )
         lines = stream.iter_lines()
+        assert "no-transform" in stream.headers["cache-control"]
         assert "graph_changed" in next_frame(lines)
         fork = api.post(url + "/fork", headers=other).json()["id"]
         # A hidden fork must not trigger a graph invalidation.
@@ -300,7 +324,7 @@ def test_edit_rollback_validation_and_cors(backend):
         assert preflight.status_code == 200
     assert api.get("/health").json() == {"status": "ok"}
     assert api.get("/missing").json()["error"]["code"] == "not_found"
-    assert api.delete(url).json()["error"]["code"] == "method_not_allowed"
+    assert api.delete(url).json()["error"]["code"] == "unauthorized"
 
 
 def test_contract_and_seed(backend):

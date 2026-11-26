@@ -44,6 +44,7 @@ class SnippetFile(BaseModel):
 class CreateSnippet(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: Text
+    description: Text = Field(default='', max_length=2000)
     tags: list[Text] = Field(default_factory=list, max_length=10)
     visibility: Literal["public", "unlisted", "private"]
     files: list[SnippetFile] = Field(min_length=1, max_length=20)

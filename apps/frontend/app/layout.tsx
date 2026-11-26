@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import "./globals.css";
+import "../src/index.css";
 
 export const metadata: Metadata = {
-  title: "Snipbase — Sign in",
+  title: "Snipbase",
   description: "Save and share multi-file snippets",
 };
 

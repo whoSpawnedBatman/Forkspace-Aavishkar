@@ -54,7 +54,7 @@ app.add_middleware(
 @app.middleware("http")
 async def response_headers(request, call_next):
     response = await call_next(request)
-    response.headers["Cache-Control"] = "no-store"
+    response.headers.setdefault("Cache-Control", "no-store")
     response.headers["X-Content-Type-Options"] = "nosniff"
     if not request.url.path.startswith("/embed/"):
         response.headers["X-Frame-Options"] = "DENY"
@@ -219,19 +219,22 @@ def create_snippet(user: Caller, data: Annotated[CreateSnippet, Depends(read_bod
     snippet_id = uuid4()
     with connect() as db:
         db.execute(
-            "INSERT INTO snippets (id, owner_id, title, tags, visibility) VALUES (%s,%s,%s,%s,%s)",
-            (snippet_id, user, data.title, data.tags, data.visibility),
+            "INSERT INTO snippets (id, owner_id, title, description, tags, visibility) VALUES (%s,%s,%s,%s,%s,%s)",
+            (snippet_id, user, data.title, data.description, data.tags, data.visibility),
         )
         save_files(db, snippet_id, data.files)
         rebuild_chunks(db, snippet_id)
     return {"id": snippet_id}
 
 
-SUMMARY = """SELECT s.id, s.title, s.tags, s.visibility, s.created_at, s.updated_at,
+SUMMARY = """SELECT s.id, s.owner_id, s.title, s.description, s.tags, s.visibility, s.created_at, s.updated_at,
                     CASE WHEN EXISTS (SELECT 1 FROM snippets p WHERE p.id = s.parent_snippet_id
                                       AND (p.visibility = 'public' OR p.owner_id = %s))
                          THEN s.parent_snippet_id ELSE NULL END AS parent_snippet_id,
-                    (SELECT count(*) FROM snippet_files WHERE snippet_id = s.id) AS file_count
+                    (SELECT count(*) FROM snippet_files WHERE snippet_id = s.id) AS file_count,
+                    ARRAY(SELECT path FROM snippet_files WHERE snippet_id = s.id ORDER BY position) AS file_paths,
+                    (SELECT count(*) FROM snippet_stars WHERE snippet_id = s.id) AS star_count,
+                    EXISTS (SELECT 1 FROM snippet_stars WHERE snippet_id = s.id AND user_id = %s) AS starred
              FROM snippets s """
 
 
@@ -239,21 +242,26 @@ SUMMARY = """SELECT s.id, s.title, s.tags, s.visibility, s.created_at, s.updated
 def list_snippets(
     user: Caller,
     response: Response,
-    scope: Literal["public", "mine", "shared"] = "public",
+    scope: Literal["public", "mine", "shared", "starred"] = "public",
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     tag: str | None = Query(None, min_length=1, max_length=32),
     q: str | None = Query(None, min_length=1, max_length=200),
 ):
-    if scope in ("mine", "shared") and user is None:
+    if scope in ("mine", "shared", "starred") and user is None:
         raise unauthorized()
     predicate = {
         "public": "WHERE s.visibility = 'public'",
         "mine": "WHERE s.owner_id = %s",
+        "starred": """WHERE EXISTS (SELECT 1 FROM snippet_stars st WHERE st.snippet_id=s.id AND st.user_id=%s)
+            AND (s.visibility IN ('public','unlisted') OR s.owner_id=%s OR EXISTS
+            (SELECT 1 FROM snippet_access a WHERE a.snippet_id=s.id AND a.user_id=%s))""",
         "shared": """WHERE s.visibility = 'private' AND EXISTS (
             SELECT 1 FROM snippet_access a WHERE a.snippet_id=s.id AND a.user_id=%s)""",
     }[scope]
-    params = [user] if scope == "public" else [user, user]
+    params = [user, user] if scope == "public" else [user, user, user]
+    if scope == "starred":
+        params.extend([user, user])
     if tag is not None:
         predicate += " AND %s = ANY(s.tags)"
         params.append(tag.strip().lower())
@@ -280,7 +288,7 @@ def list_snippets(
 def read_snippet(id: UUID, user: Caller, response: Response):
     with connect() as db:
         readable(db, id, user)
-        row = db.execute(SUMMARY + "WHERE s.id = %s", (user, id)).fetchone()
+        row = db.execute(SUMMARY + "WHERE s.id = %s", (user, user, id)).fetchone()
         row["files"] = db.execute(
             "SELECT path, content FROM snippet_files WHERE snippet_id = %s ORDER BY position",
             (id,),
@@ -301,6 +309,7 @@ def ask_snippet(id: UUID, user: Caller, data: AskSnippet):
             raise problem(429, "rate_limited", "Too many assistant requests. Try again shortly.")
         ask_limits[key] = recent + [now]
         terms = set(re.findall(r"[a-zA-Z0-9_]{2,}", data.question.lower()))
+        overview = data.question.lower().startswith("explain how the files")
         chunks = db.execute(
             """SELECT file_path, start_line, content,
                       ts_rank_cd(search, plainto_tsquery('simple', %s)) AS rank
@@ -308,7 +317,7 @@ def ask_snippet(id: UUID, user: Caller, data: AskSnippet):
                WHERE snippet_id=%s
                ORDER BY rank DESC, id LIMIT 6""", (data.question, id)
         ).fetchall()
-        chunks = [row for row in chunks if any(term in row["content"].lower() for term in terms)]
+        chunks = [row for row in chunks if overview or any(term in row["content"].lower() for term in terms)]
         # A legacy database may predate the index; keep the endpoint self-healing.
         if not chunks:
             rebuild_chunks(db, id)
@@ -319,7 +328,7 @@ def ask_snippet(id: UUID, user: Caller, data: AskSnippet):
                    WHERE snippet_id=%s
                    ORDER BY rank DESC, id LIMIT 6""", (data.question, id)
             ).fetchall()
-            chunks = [row for row in chunks if any(term in row["content"].lower() for term in terms)]
+            chunks = [row for row in chunks if overview or any(term in row["content"].lower() for term in terms)]
     context = "\n\n".join(f"[{row['file_path']}:{row['start_line']}]\n{row['content']}" for row in chunks[:4])
     context = context[:int(os.getenv("RAG_MAX_CONTEXT_CHARS", "6000"))]
     if not context:
@@ -358,8 +367,8 @@ def replace_snippet(
     with connect() as db:
         readable(db, id, user, owner=True, lock=True)
         db.execute(
-            "UPDATE snippets SET title=%s, tags=%s, visibility=%s, updated_at=clock_timestamp() WHERE id=%s",
-            (data.title, data.tags, data.visibility, id),
+            "UPDATE snippets SET title=%s, description=%s, tags=%s, visibility=%s, updated_at=clock_timestamp() WHERE id=%s",
+            (data.title, data.description, data.tags, data.visibility, id),
         )
         db.execute("DELETE FROM snippet_files WHERE snippet_id=%s", (id,))
         save_files(db, id, data.files)
@@ -387,9 +396,9 @@ def fork_snippet(id: UUID, user: Caller):
     with connect() as db:
         source = readable(db, id, user)
         db.execute(
-            """INSERT INTO snippets (id, owner_id, title, tags, visibility, parent_snippet_id)
-                      VALUES (%s,%s,%s,%s,'private',%s)""",
-            (fork_id, user, source["title"], source["tags"], id),
+            """INSERT INTO snippets (id, owner_id, title, description, tags, visibility, parent_snippet_id)
+                      VALUES (%s,%s,%s,%s,%s,'private',%s)""",
+            (fork_id, user, source["title"], source["description"], source["tags"], id),
         )
         db.execute(
             """INSERT INTO snippet_files (snippet_id, position, path, content)
@@ -472,15 +481,9 @@ def embed(id: UUID, user: Caller, request: Request):
             + code_html
             + "</section>"
         )
-    forwarded_host = request.headers.get("x-forwarded-host")
-    app_origin = (
-        request.headers.get("referer", "").split("/app")[0]
-        or (
-            request.headers.get("x-forwarded-proto", request.url.scheme)
-            + "://"
-            + (forwarded_host or request.headers.get("host", ""))
-        )
-    )
+    origins = [origin.rstrip("/") for origin in os.environ["FRONTEND_ORIGIN"].split(",")]
+    referer = request.headers.get("referer", "")
+    app_origin = next((origin for origin in origins if referer.startswith(origin + "/")), origins[0])
     html = (
         '<!doctype html><html lang="en"><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -603,7 +606,7 @@ def graph_events(id: UUID, user: Caller, request: Request):
         events(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-store",
+            "Cache-Control": "no-store, no-transform",
             "X-Accel-Buffering": "no",
         },
     )

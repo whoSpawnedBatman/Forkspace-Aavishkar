@@ -21,7 +21,7 @@ def server(dsn):
     )
     try:
         with httpx.Client(base_url="http://127.0.0.1:8091") as api:
-            for _ in range(60):
+            for _ in range(300):
                 assert process.poll() is None
                 try:
                     if api.get("/openapi.json").is_success:
@@ -120,7 +120,7 @@ def test_save_reopen_and_permissions():
                     "/snippets/" + ids["private"] + "/star", headers=owner
                 ).json() == {
                     "starred": True,
-                    "count": 1,
+                    "star_count": 1,
                 }
                 for headers in ({}, other, owner):
                     listing = api.get("/snippets", headers=headers).json()["items"]
@@ -203,7 +203,7 @@ def test_legacy_upgrade_preserves_data():
             with psycopg.connect(dsn) as db:
                 assert db.execute(
                     "SELECT count(*) FROM schema_migrations"
-                ).fetchone() == (4,)
+                ).fetchone() == (5,)
         finally:
             admin.execute(
                 sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema))

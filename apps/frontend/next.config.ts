@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     const upstream = process.env.LOCAL_AUTH_UPSTREAM;
     return upstream ? [
       { source: "/auth/v1/:path*", destination: `${upstream}/:path*` },
-      { source: "/api/:path*", destination: "http://api:8000/:path*" },
+      { source: "/api/:path*", destination: `${process.env.API_UPSTREAM ?? "http://api:8000"}/:path*` },
     ] : [];
   },
 };
