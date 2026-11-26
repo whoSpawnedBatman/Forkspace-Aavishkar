@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import re
+import time
 from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
@@ -26,7 +28,7 @@ from pygments.util import ClassNotFound
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import ValidationError
 
-from models import CreateSnippet, GrantAccess
+from models import AskSnippet, CreateSnippet, GrantAccess
 from database import connect, migrate
 
 
@@ -37,6 +39,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Forkspace", version="0.2.0", lifespan=lifespan)
+ask_limits: dict[str, list[float]] = {}
 app.openapi_schema = yaml.safe_load(
     Path(__file__).with_name("openapi.yaml").read_text("utf-8")
 )
@@ -193,6 +196,23 @@ def save_files(db, snippet_id, files):
         )
 
 
+def rebuild_chunks(db, snippet_id):
+    db.execute("DELETE FROM snippet_chunks WHERE snippet_id=%s", (snippet_id,))
+    files = db.execute(
+        "SELECT path, content FROM snippet_files WHERE snippet_id=%s ORDER BY position", (snippet_id,)
+    ).fetchall()
+    rows = []
+    for file in files:
+        lines = file["content"].splitlines() or [file["content"]]
+        for start in range(0, len(lines), 40):
+            rows.append((snippet_id, file["path"], start + 1, "\n".join(lines[start:start + 40])))
+    if rows:
+        with db.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO snippet_chunks (snippet_id,file_path,start_line,content) VALUES (%s,%s,%s,%s)", rows
+            )
+
+
 @app.post("/snippets", status_code=201)
 def create_snippet(user: Caller, data: Annotated[CreateSnippet, Depends(read_body)]):
     require_user(user)
@@ -203,6 +223,7 @@ def create_snippet(user: Caller, data: Annotated[CreateSnippet, Depends(read_bod
             (snippet_id, user, data.title, data.tags, data.visibility),
         )
         save_files(db, snippet_id, data.files)
+        rebuild_chunks(db, snippet_id)
     return {"id": snippet_id}
 
 
@@ -268,6 +289,67 @@ def read_snippet(id: UUID, user: Caller, response: Response):
     return row
 
 
+@app.post("/snippets/{id}/ask")
+def ask_snippet(id: UUID, user: Caller, data: AskSnippet):
+    """Small RAG path: authorize, retrieve relevant file chunks, then optionally generate."""
+    with connect() as db:
+        readable(db, id, user)
+        now = time.monotonic()
+        key = f"{user}:{id}"
+        recent = [stamp for stamp in ask_limits.get(key, []) if now - stamp < 60]
+        if len(recent) >= int(os.getenv("RAG_MAX_REQUESTS_PER_MINUTE", "10")):
+            raise problem(429, "rate_limited", "Too many assistant requests. Try again shortly.")
+        ask_limits[key] = recent + [now]
+        terms = set(re.findall(r"[a-zA-Z0-9_]{2,}", data.question.lower()))
+        chunks = db.execute(
+            """SELECT file_path, start_line, content,
+                      ts_rank_cd(search, plainto_tsquery('simple', %s)) AS rank
+               FROM snippet_chunks
+               WHERE snippet_id=%s
+               ORDER BY rank DESC, id LIMIT 6""", (data.question, id)
+        ).fetchall()
+        chunks = [row for row in chunks if any(term in row["content"].lower() for term in terms)]
+        # A legacy database may predate the index; keep the endpoint self-healing.
+        if not chunks:
+            rebuild_chunks(db, id)
+            chunks = db.execute(
+                """SELECT file_path, start_line, content,
+                          ts_rank_cd(search, plainto_tsquery('simple', %s)) AS rank
+                   FROM snippet_chunks
+                   WHERE snippet_id=%s
+                   ORDER BY rank DESC, id LIMIT 6""", (data.question, id)
+            ).fetchall()
+            chunks = [row for row in chunks if any(term in row["content"].lower() for term in terms)]
+    context = "\n\n".join(f"[{row['file_path']}:{row['start_line']}]\n{row['content']}" for row in chunks[:4])
+    context = context[:int(os.getenv("RAG_MAX_CONTEXT_CHARS", "6000"))]
+    if not context:
+        context = "No matching code chunk was found in the snippet."
+    key = os.getenv("OPENAI_API_KEY")
+    if key:
+        result = httpx.post(
+            os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1") + "/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={"model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"), "temperature": 0.1, "max_tokens": 300,
+                  "messages": [{"role": "system", "content": "Answer briefly using only the code context. Say insufficient context when needed."},
+                               {"role": "user", "content": f"Question: {data.question}\n\nCode context:\n{context}"}]},
+            timeout=30,
+        )
+        if result.status_code == 200:
+            return {"answer": result.json()["choices"][0]["message"]["content"], "sources": [f"{row['file_path']}:{row['start_line']}" for row in chunks[:4]]}
+    if chunks:
+        source_text = ", ".join(f"{row['file_path']}:{row['start_line']}" for row in chunks[:4])
+        excerpts = []
+        for row in chunks[:3]:
+            lines = [line.strip() for line in row["content"].splitlines() if line.strip()][:3]
+            if lines:
+                excerpts.append(f"{row['file_path']} contains: " + " ".join(lines))
+        answer = f"I found relevant code in {source_text}. " + " ".join(excerpts)
+    else:
+        answer = "I could not find code in this snippet that answers that question."
+    return {"answer": answer, "context": context,
+            "sources": [f"{row['file_path']}:{row['start_line']}" for row in chunks[:4]]}
+
+
 @app.put("/snippets/{id}")
 def replace_snippet(
     id: UUID, user: Caller, data: Annotated[CreateSnippet, Depends(read_body)]
@@ -281,6 +363,7 @@ def replace_snippet(
         )
         db.execute("DELETE FROM snippet_files WHERE snippet_id=%s", (id,))
         save_files(db, id, data.files)
+        rebuild_chunks(db, id)
     return {"id": id}
 
 
@@ -313,6 +396,7 @@ def fork_snippet(id: UUID, user: Caller):
                       SELECT %s, position, path, content FROM snippet_files WHERE snippet_id=%s""",
             (fork_id, id),
         )
+        rebuild_chunks(db, fork_id)
     return {"id": fork_id}
 
 
@@ -450,7 +534,7 @@ def star_state(id: UUID, user: Caller):
     with connect() as db:
         readable(db, id, user)
         row = db.execute(
-            """SELECT count(*) AS count,
+            """SELECT count(*) AS star_count,
                             COALESCE(bool_or(user_id = %s), false) AS starred
                             FROM snippet_stars WHERE snippet_id=%s""",
             (user, id),

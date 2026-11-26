@@ -83,3 +83,8 @@ class GrantAccess(BaseModel):
         if "@" not in email:
             raise ValueError("Expected an email address")
         return email
+
+
+class AskSnippet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(min_length=3, max_length=500)

@@ -34,6 +34,8 @@ export default function WorkspacePage() {
   const [graph, setGraph] = useState<ForkGraph | null>(null);
   const [starInfo, setStarInfo] = useState<{ star_count: number; starred: boolean } | null>(null);
   const [shareEmail, setShareEmail] = useState("");
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiAnswer, setAiAnswer] = useState<{ answer: string; sources: string[] } | null>(null);
   const latestSearch = useRef(0);
 
   const refresh = useCallback(async (nextScope: "mine" | "public" | "shared", tag: string) => {
@@ -61,6 +63,7 @@ export default function WorkspacePage() {
       setGraph(snippet.visibility === "public" ? await api.graph(snippet.id) : null);
       setStarInfo(await api.starState(snippet.id).catch(() => null));
       setFiles(snippet.files);
+      setAiAnswer(null);
       setActiveFile(0);
       setNotice(canEdit ? "Snippet reopened and ready to edit." : "Public snippet opened in read-only mode.");
     } catch (caught) {
@@ -175,6 +178,16 @@ export default function WorkspacePage() {
     }
   }
 
+  async function askAi() {
+    if (!selectedId || !aiQuestion.trim()) return;
+    try {
+      setBusy(true); setError("");
+      setAiAnswer(await api.ask(selectedId, aiQuestion.trim()));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not ask the snippet assistant.");
+    } finally { setBusy(false); }
+  }
+
   function updateFile(patch: Partial<SnippetFile>) {
     setFiles((current) => current.map((file, index) => index === activeFile ? { ...file, ...patch } : file));
   }
@@ -257,6 +270,12 @@ export default function WorkspacePage() {
             {files.map((file, index) => <button key={`${file.path}-${index}`} className={activeFile === index ? "active" : ""} onClick={() => setActiveFile(index)}>{file.path || `file-${index + 1}`}</button>)}
             {editable && files.length < 20 && <button onClick={() => { setFiles([...files, { path: `file-${files.length + 1}.txt`, content: "" }]); setActiveFile(files.length); }}>+</button>}
           </div>
+          {selectedId && <section className="access-grant" aria-labelledby="assistant-title">
+            <div><strong id="assistant-title">Ask the snippet assistant</strong><span>Retrieves the most relevant code before answering.</span></div>
+            <input aria-label="Question about this snippet" placeholder="How does this work?" value={aiQuestion} onChange={(event) => setAiQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); askAi(); } }} />
+            <button type="button" className="small-button primary" onClick={askAi} disabled={busy || !aiQuestion.trim()}>Ask</button>
+            {aiAnswer && <div style={{ gridColumn: "1 / -1", background: "#f8fafc", borderRadius: "10px", padding: "12px", whiteSpace: "pre-wrap" }}><strong>Answer</strong><p>{aiAnswer.answer}</p><small>Sources: {aiAnswer.sources.join(", ") || "none"}</small></div>}
+          </section>}
           <div className="code-editor">
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <input aria-label="File path" style={{ flex: 1 }} value={files[activeFile]?.path ?? ""} onChange={(event) => updateFile({ path: event.target.value })} disabled={!editable} />

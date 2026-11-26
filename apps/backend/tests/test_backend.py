@@ -123,7 +123,7 @@ def test_fork_edit_search_raw_embed_and_stars(backend):
         "starred": False,
     }
     with psycopg.connect(dsn) as db:
-        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (3,)
+        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (4,)
     for headers in ({}, owner, other):
         assert api.get(url + "/graph", headers=headers).json() == {
             "nodes": sorted(
@@ -160,6 +160,30 @@ def test_private_viewer_access(backend):
         for item in api.get("/snippets?scope=shared", headers=other).json()["items"]
     ]
     assert api.put(url, headers=other, json=sample()).status_code == 404
+
+
+def test_rag_retrieves_grounded_chunks_and_respects_access(backend):
+    api, owner, other, dsn = backend
+    snippet = save(
+        api,
+        owner,
+        visibility="private",
+        files=[
+            {"path": "app.py", "content": "def deploy():\n    return 'docker production'\n"},
+            {"path": "README.md", "content": "This unrelated note mentions apples.\n"},
+        ],
+    )
+    url = f"/snippets/{snippet}/ask"
+    assert api.post(url, json={"question": "How does deploy work?"}, headers=other).status_code == 404
+    result = api.post(url, json={"question": "How does deploy work?"}, headers=owner)
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body["sources"] == ["app.py:1"]
+    assert "app.py contains" in body["answer"] and "deploy" in body["answer"]
+    assert "deploy" in body["context"]
+    with psycopg.connect(dsn) as db:
+        assert db.execute("SELECT count(*) FROM snippet_chunks WHERE snippet_id=%s", (snippet,)).fetchone() == (2,)
+    assert api.post(url, json={"question": "x"}, headers=owner).status_code == 422
 
 
 def test_public_graph_live_updates_and_hidden_lineage(backend):

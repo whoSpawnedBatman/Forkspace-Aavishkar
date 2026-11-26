@@ -203,7 +203,7 @@ def test_legacy_upgrade_preserves_data():
             with psycopg.connect(dsn) as db:
                 assert db.execute(
                     "SELECT count(*) FROM schema_migrations"
-                ).fetchone() == (3,)
+                ).fetchone() == (4,)
         finally:
             admin.execute(
                 sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema))

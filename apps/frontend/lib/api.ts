@@ -28,12 +28,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body) headers.set("Content-Type", "application/json");
   if (data.session) headers.set("Authorization", `Bearer ${data.session.access_token}`);
-  const response = await fetch(`${apiOrigin}${path}`, { ...init, headers });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(body?.error?.message ?? `Request failed (${response.status}).`);
+  let response: Response;
+  try {
+    response = await fetch(`${apiOrigin}${path}`, { ...init, headers });
+  } catch {
+    throw new Error("Cannot reach the backend server. It may be waking up — try again in 30 seconds.");
   }
-  return response.json() as Promise<T>;
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    if (text.startsWith("<!") || text.startsWith("<html")) {
+      throw new Error("Backend returned an HTML error page instead of JSON. It may be starting up — try again shortly.");
+    }
+    try {
+      const body = JSON.parse(text);
+      throw new Error(body?.error?.message ?? `Request failed (${response.status}).`);
+    } catch (e) {
+      if (e instanceof Error && !e.message.startsWith("Unexpected")) throw e;
+      throw new Error(`Request failed (${response.status}).`);
+    }
+  }
+  const text = await response.text();
+  if (!text) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("Backend returned an unexpected response. It may be starting up — try again shortly.");
+  }
 }
 
 export const api = {
@@ -78,6 +98,11 @@ export const api = {
     return request<{ email: string; access: "viewer" }>(`/snippets/${id}/access`, {
       method: "PUT",
       body: JSON.stringify({ email }),
+    });
+  },
+  ask(id: string, question: string) {
+    return request<{ answer: string; context?: string; sources: string[] }>(`/snippets/${id}/ask`, {
+      method: "POST", body: JSON.stringify({ question }),
     });
   },
 };

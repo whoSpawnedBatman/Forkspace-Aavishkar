@@ -1,0 +1,94 @@
+- generic [active] [ref=f2e1]:
+  - main [ref=f2e2]:
+    - generic [ref=f2e3]:
+      - generic [ref=f2e4]: SNIPBASE
+      - generic [ref=f2e10]:
+        - generic [ref=f2e11]: ragdemo
+        - button "Sign out" [ref=f2e12] [cursor=pointer]
+    - generic [ref=f2e13]:
+      - strong [ref=f2e14]: Demo path
+      - generic [ref=f2e15]: 1 Create a public snippet
+      - generic [ref=f2e16]: 2 Copy embed link
+      - generic [ref=f2e17]: 3 Open as a second user
+      - generic [ref=f2e18]: 4 Fork, edit & publish
+      - generic [ref=f2e19]: 5 Search by tag
+    - generic [ref=f2e20]:
+      - complementary [ref=f2e21]:
+        - generic [ref=f2e22]:
+          - generic [ref=f2e23]:
+            - text: LIBRARY
+            - heading "Snippets" [level=2] [ref=f2e24]
+          - button "+ New" [ref=f2e25] [cursor=pointer]
+        - generic [ref=f2e26]:
+          - button "Mine" [ref=f2e27] [cursor=pointer]
+          - button "Shared" [ref=f2e28] [cursor=pointer]
+          - button "Discover" [ref=f2e29] [cursor=pointer]
+        - generic [ref=f2e30]:
+          - textbox "Search by tag" [ref=f2e31]:
+            - /placeholder: Search tag, e.g. demo
+          - button "Search" [ref=f2e32] [cursor=pointer]
+        - 'button "Three-file web demo 3 files · public #demo #javascript" [ref=f2e65] [cursor=pointer]':
+          - strong [ref=f2e66]: Three-file web demo
+          - generic [ref=f2e67]: 3 files · public
+          - generic [ref=f2e68]: "#demo #javascript"
+      - generic [ref=f2e35]:
+        - generic [ref=f2e36]:
+          - generic [ref=f2e37]:
+            - text: EDITING
+            - heading "Three-file web demo" [level=2] [ref=f2e38]
+          - generic [ref=f2e39]:
+            - link "Fork graph (1)" [ref=f2e69] [cursor=pointer]:
+              - /url: "#fork-graph"
+            - button "Copy embed link" [ref=f2e70] [cursor=pointer]
+            - link "Highlighted view" [ref=f2e71] [cursor=pointer]:
+              - /url: /api/embed/28fbaa75-e1ac-4462-ae4d-0d02b80173d2
+            - button "Delete" [ref=f2e72] [cursor=pointer]
+            - button "Save changes" [ref=f2e73] [cursor=pointer]
+        - generic [ref=f2e41]:
+          - generic [ref=f2e42]:
+            - strong [ref=f2e43]: Owner access
+            - generic [ref=f2e44]: Edit files, control visibility, and save changes.
+          - generic [ref=f2e45]: public
+        - generic [ref=f2e46]:
+          - generic [ref=f2e47]:
+            - text: Title
+            - textbox "Title" [ref=f2e48]: Three-file web demo
+          - generic [ref=f2e49]:
+            - text: Tags
+            - textbox "Tags" [ref=f2e50]:
+              - /placeholder: demo, javascript
+              - text: demo, javascript
+          - generic [ref=f2e51]:
+            - text: Visibility
+            - combobox "Visibility" [ref=f2e52]:
+              - option "Public — discoverable" [selected]
+              - option "Unlisted — anyone with link"
+              - option "Private — invited viewers"
+        - generic [ref=f2e53]:
+          - button "index.html" [ref=f2e54] [cursor=pointer]
+          - button "app.js" [ref=f2e55] [cursor=pointer]
+          - button "styles.css" [ref=f2e56] [cursor=pointer]
+          - button "+" [ref=f2e57] [cursor=pointer]
+        - region "Ask the snippet assistant" [ref=f2e74]:
+          - generic [ref=f2e75]:
+            - strong [ref=f2e76]: Ask the snippet assistant
+            - generic [ref=f2e77]: Retrieves the most relevant code before answering.
+          - textbox "Question about this snippet" [ref=f2e78]:
+            - /placeholder: How does this work?
+          - button "Ask" [disabled] [ref=f2e79] [cursor=pointer]
+        - generic [ref=f2e58]:
+          - generic [ref=f2e59]:
+            - textbox "File path" [ref=f2e60]: index.html
+            - generic [ref=f2e61]: HTML
+          - textbox "File content" [ref=f2e62]: <main id="app"></main> <script src="app.js"></script>
+        - button "Remove current file" [ref=f2e63] [cursor=pointer]
+        - region "Fork graph" [ref=f2e80]:
+          - generic [ref=f2e81]:
+            - heading "Fork graph" [level=3] [ref=f2e82]
+            - generic [ref=f2e83]: 1 public version · 0 links
+          - button "Original Three-file web demo 28fbaa75" [ref=f2e86] [cursor=pointer]:
+            - generic [ref=f2e87]: Original
+            - strong [ref=f2e88]: Three-file web demo
+            - generic [ref=f2e89]: 28fbaa75
+        - status [ref=f2e90]: Snippet saved.
+  - alert [ref=f2e64]
