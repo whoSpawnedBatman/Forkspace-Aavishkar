@@ -1,0 +1,6 @@
+{
+  "name": "Snippets — Multi-File Code Snippet & Gist Hub",
+  "description": "Create, share, embed, and fork multi-file code snippets with syntax highlighting, visibility controls, and an interactive embed sandbox.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

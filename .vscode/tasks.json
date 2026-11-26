@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Snip it locally",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev",
+				"--",
+				"-p",
+				"3100"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

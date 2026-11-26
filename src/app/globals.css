@@ -1,0 +1,259 @@
+@import "tailwindcss";
+
+/* ─── Design tokens ───────────────────────────────────────────── */
+:root {
+  --canvas: #111215;
+  --paper: #17191f;
+  --surface: #1d2028;
+  --code: #0b0c10;
+  --control: #2b2e3a;
+  --hairline: #252833;
+  --ink: #e8eaf0;
+  --muted: #8b90a0;
+  --action: #2563eb;
+  --action-hover: #1d4ed8;
+  --action-link: #5b9bff;
+  --selected: #1a2a4a;
+  --selected-ink: #60a5fa;
+  --error: #f87171;
+  --error-bg: #271519;
+  --radius-control: 10px;
+  --radius-preview: 14px;
+  --radius-well: 8px;
+}
+
+/* ─── Tailwind theme mapping ──────────────────────────────────── */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-code: var(--code);
+  --color-control: var(--control);
+  --color-hairline: var(--hairline);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-action: var(--action);
+  --color-action-hover: var(--action-hover);
+  --color-action-link: var(--action-link);
+  --color-selected: var(--selected);
+  --color-selected-ink: var(--selected-ink);
+  --color-error: var(--error);
+  --color-error-bg: var(--error-bg);
+
+  --radius-control: var(--radius-control);
+  --radius-preview: var(--radius-preview);
+  --radius-well: var(--radius-well);
+
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+}
+
+/* ─── Base resets ─────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.site-shell {
+  min-height: 100dvh;
+  background:
+    radial-gradient(52rem 24rem at 82% 7%, rgba(119, 70, 207, 0.1), transparent 68%),
+    #090b12;
+  color: #e8eaf0;
+}
+
+.site-header {
+  border-color: #232737;
+  background: rgba(9, 11, 18, 0.94);
+  backdrop-filter: blur(16px);
+}
+
+.site-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #f0f3fb;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.site-brand-mark {
+  color: #20c9e8;
+}
+
+.site-shell .site-panel {
+  border-color: #252a3a;
+  background: #11141e;
+  color: #e8eaf0;
+}
+
+.site-shell .site-panel-soft {
+  border-color: #252a3a;
+  background: #0e1119;
+  color: #e8eaf0;
+}
+
+.site-shell .site-title {
+  color: #f1f3f8;
+}
+
+.site-shell .site-muted {
+  color: #a1a7b8;
+}
+
+.site-shell .site-label {
+  color: #d7dbe5;
+}
+
+.site-shell .site-input {
+  border-color: #343a4d;
+  background: #0b0e15;
+  color: #f1f3f8;
+}
+
+.site-shell .site-input::placeholder {
+  color: #798196;
+}
+
+.site-shell .site-divider {
+  border-color: #252a3a;
+}
+
+.site-shell .site-primary {
+  border-color: #7549bb;
+  background: #784bc2;
+  color: white;
+}
+
+.site-shell .site-primary:hover {
+  border-color: #926bda;
+  background: #6840ad;
+}
+
+.site-shell .site-secondary {
+  border-color: #383d50;
+  background: #151925;
+  color: #e5e8f0;
+}
+
+.site-shell .site-secondary:hover {
+  border-color: #64508a;
+  background: #1b2030;
+}
+
+.site-shell .site-nav-link {
+  color: #c0c5d2;
+}
+
+.site-shell .site-nav-link:hover {
+  color: #f1f3f8;
+}
+
+.site-shell .site-accent {
+  color: #52d7e8;
+}
+
+.site-shell .site-tag {
+  border-color: #26454e;
+  background: #0d1a20;
+  color: #75dce8;
+}
+
+.site-shell .site-error {
+  border-color: #63303a;
+  background: #211318;
+  color: #ff9a9e;
+}
+
+.site-shell .site-row {
+  border-color: #252a3a;
+  background: #11141e;
+  color: #e8eaf0;
+}
+
+.site-shell .site-row:hover,
+.site-shell .site-row:focus-visible {
+  background: #171a28;
+}
+
+.site-shell .site-selected {
+  background: #29213d;
+  color: #dccbff;
+}
+
+.site-shell .site-code-chrome {
+  border-color: #272d3e;
+  background: #10131c;
+}
+
+.site-shell .site-border {
+  border-color: #252a3a;
+}
+
+/* ─── Skip link ───────────────────────────────────────────────── */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 1rem;
+  z-index: 9999;
+  padding: 0.5rem 1rem;
+  background: var(--action);
+  color: #fff;
+  border-radius: var(--radius-control);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 1rem;
+}
+
+/* ─── Focus ring ──────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--action-link);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ─── Selection ───────────────────────────────────────────────── */
+::selection {
+  background: color-mix(in srgb, var(--action) 35%, transparent);
+  color: inherit;
+}
+
+/* ─── Scrollbar (Webkit) ──────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--control);
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 60%, transparent);
+}
