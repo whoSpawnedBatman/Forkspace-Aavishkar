@@ -1,4 +1,5 @@
 export type Visibility = 'public' | 'unlisted' | 'private';
+export type LinkExpiry = '1h' | '1d' | '7d' | 'forever';
 
 export type ViewerRole = 'user' | 'guest';
 
@@ -44,6 +45,7 @@ export interface SnippetSummary {
   readonly title: string;
   readonly description?: string;
   readonly visibility: Visibility;
+  readonly linkExpiresAt?: string | null;
   readonly tags: readonly string[];
   readonly fileCount: number;
   readonly filePaths: readonly string[];
@@ -111,6 +113,7 @@ export interface SnippetDraft {
   readonly title: string;
   readonly description?: string;
   readonly visibility: Visibility;
+  readonly linkExpiry: LinkExpiry;
   readonly tags: readonly string[];
   readonly files: readonly SnippetFile[];
 }
@@ -139,6 +142,7 @@ export type FailureCode =
   | 'unauthenticated'
   | 'forbidden'
   | 'invalid'
+  | 'security'
   | 'conflict'
   | 'unavailable'
   | 'unknown'

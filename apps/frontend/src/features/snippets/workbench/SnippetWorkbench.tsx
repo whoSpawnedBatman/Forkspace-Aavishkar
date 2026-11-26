@@ -45,6 +45,7 @@ import {
   type FieldIssue,
   type Snippet,
   type SnippetDraft,
+  type LinkExpiry,
   type Visibility,
 } from '@/src/data/snippets/domain';
 import {
@@ -254,6 +255,7 @@ export function SnippetWorkbench({
   const [title, setTitle] = React.useState(snippet?.title ?? '');
   const [description, setDescription] = React.useState(snippet?.description ?? '');
   const [visibility, setVisibility] = React.useState<Visibility>(snippet?.visibility ?? 'private');
+  const [linkExpiry, setLinkExpiry] = React.useState<LinkExpiry>('forever');
   const [tags, setTags] = React.useState<string[]>(() =>
     snippet ? [...snippet.tags] : [],
   );
@@ -339,6 +341,7 @@ export function SnippetWorkbench({
     setTitle(snippet?.title ?? '');
     setDescription(snippet?.description ?? '');
     setVisibility(snippet?.visibility ?? 'private');
+    setLinkExpiry('forever');
     setTags(snippet ? [...snippet.tags] : []);
     setTagDraft('');
     setFiles(nextFiles);
@@ -498,6 +501,7 @@ export function SnippetWorkbench({
       title,
       description,
       visibility,
+      linkExpiry,
       tags: finalTags,
       files: files.map((f) => ({
         path: f.path,
@@ -575,6 +579,10 @@ export function SnippetWorkbench({
     setIsDirty(false);
     setDiscardDialogOpen(false);
     showToast('success', 'Unsaved changes discarded.');
+  };
+
+  const releaseEditorFocus = () => {
+    (document.activeElement as HTMLElement | null)?.blur();
   };
 
   const handleCopyAccessLink = async () => {
@@ -1018,7 +1026,7 @@ export function SnippetWorkbench({
                         setVisibility(e.target.value as Visibility);
                         setIsDirty(true);
                       }}
-                      className="h-7 rounded-[6px] border border-[var(--control-border)] bg-[var(--code-surface)] px-2.5 text-xs text-[var(--ink)] focus-visible:border-[var(--action)] focus-visible:outline-none cursor-pointer"
+                      className="h-7 rounded-[6px] border border-[var(--control-border)] bg-[var(--code-surface)] px-2.5 text-xs text-[var(--code-ink)] focus-visible:border-[var(--action)] focus-visible:outline-none cursor-pointer"
                     >
                       {VISIBILITY_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>
@@ -1029,6 +1037,19 @@ export function SnippetWorkbench({
                     <span className="text-[11.5px] text-[var(--muted-text)]">
                       {VISIBILITY_OPTIONS.find((o) => o.value === visibility)?.summary}
                     </span>
+                    {visibility !== 'public' && (
+                      <select
+                        aria-label="Link expiry"
+                        value={linkExpiry}
+                        onChange={(e) => { setLinkExpiry(e.target.value as LinkExpiry); setIsDirty(true); }}
+                        className="h-7 rounded-[6px] border border-[var(--control-border)] bg-[var(--code-surface)] px-2.5 text-xs text-[var(--code-ink)]"
+                      >
+                        <option value="1h">Link expires in 1 hour</option>
+                        <option value="1d">Link expires in 1 day</option>
+                        <option value="7d">Link expires in 7 days</option>
+                        <option value="forever">Never expires</option>
+                      </select>
+                    )}
                   </div>
                 ) : (
                   <span className="text-[var(--ink)] capitalize">
@@ -1279,7 +1300,7 @@ export function SnippetWorkbench({
                       className={cn(
                         'group relative flex items-center border-r border-[var(--hairline)]/80 transition-colors shrink-0',
                         isActive
-                          ? 'bg-[var(--code-surface)] text-[var(--ink)]'
+                          ? 'bg-[var(--code-surface)] text-[var(--code-ink)]'
                           : 'bg-transparent text-[var(--secondary-text)] hover:bg-[var(--code-surface-elevated)] hover:text-[var(--ink)]',
                       )}
                     >
@@ -1426,7 +1447,7 @@ export function SnippetWorkbench({
                       aria-label="Active file path"
                       aria-invalid={Boolean(activeFileIssue)}
                       className={cn(
-                        'h-7 min-w-[160px] flex-1 max-w-[360px] rounded-[5px] border bg-[var(--code-surface)] px-2.5 font-mono text-xs text-[var(--ink)] focus:outline-none',
+                        'h-7 min-w-[160px] flex-1 max-w-[360px] rounded-[5px] border bg-[var(--code-surface)] px-2.5 font-mono text-xs text-[var(--code-ink)] focus:outline-none',
                         activeFileIssue
                           ? 'border-[var(--error-ink)]'
                           : 'border-[var(--hairline)] focus:border-[var(--action)]',
@@ -1438,7 +1459,7 @@ export function SnippetWorkbench({
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 font-mono text-xs">
-                    <span className="text-[var(--ink)]">{activeFile.path}</span>
+                    <span className="text-[var(--code-ink)]">{activeFile.path}</span>
                     <span aria-hidden="true" className="text-[var(--muted-text)]">
                       ·
                     </span>
@@ -1457,7 +1478,7 @@ export function SnippetWorkbench({
                     <button
                       type="button"
                       onClick={() => setUsePlainTextarea((v) => !v)}
-                      className="rounded border border-[var(--hairline)] bg-[var(--code-surface)] px-2 py-0.5 font-mono text-[11px] text-[var(--secondary-text)] hover:text-[var(--ink)] cursor-pointer"
+                      className="rounded border border-[var(--hairline)] bg-[var(--code-surface)] px-2 py-0.5 font-mono text-[11px] text-[var(--code-muted)] hover:text-[var(--code-ink)] cursor-pointer"
                     >
                       {usePlainTextarea || monacoFailed ? 'Use IDE editor' : 'Plain text'}
                     </button>
@@ -1483,6 +1504,9 @@ export function SnippetWorkbench({
                   <textarea
                     value={activeFile.text}
                     onChange={(e) => updateFileText(activeFile.id, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') releaseEditorFocus();
+                    }}
                     spellCheck={false}
                     aria-label={`Source code for ${activeFile.path}`}
                     className="block min-h-[400px] w-full resize-y bg-[var(--code-surface)] p-4 font-mono text-[13.5px] leading-[1.6] text-[var(--code-ink)] focus:outline-none"
@@ -1501,6 +1525,7 @@ export function SnippetWorkbench({
                         activeFileId={activeFile.id}
                         onChange={updateFileText}
                         onLoadError={() => setMonacoFailed(true)}
+                        onEscape={releaseEditorFocus}
                       />
                     </React.Suspense>
                   </EditorErrorBoundary>

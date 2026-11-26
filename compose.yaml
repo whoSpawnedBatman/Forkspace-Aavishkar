@@ -23,6 +23,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      watchdog:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:local-only@db/forkspace
       SUPABASE_AUTH_URL: ${SUPABASE_AUTH_URL:-}
@@ -31,12 +33,36 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      RAG_MAX_REQUESTS_PER_MINUTE: ${RAG_MAX_REQUESTS_PER_MINUTE:-10}
-      RAG_MAX_CONTEXT_CHARS: ${RAG_MAX_CONTEXT_CHARS:-6000}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      RAG_MAX_REQUESTS_PER_MINUTE: ${RAG_MAX_REQUESTS_PER_MINUTE:-3}
+      RAG_MAX_CONTEXT_CHARS: ${RAG_MAX_CONTEXT_CHARS:-4000}
+      RAG_MAX_OUTPUT_TOKENS: ${RAG_MAX_OUTPUT_TOKENS:-200}
+      RAG_OPENAI_TIMEOUT_SECONDS: ${RAG_OPENAI_TIMEOUT_SECONDS:-20}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
+  watchdog:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+      target: runtime
+    command: ["python", "watchdog.py"]
+    expose:
+      - "9000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 volumes:
   db-data:

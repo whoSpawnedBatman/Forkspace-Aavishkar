@@ -20,11 +20,11 @@
   --ai-border: #d8e3f0;
 
   /* Recessed code well stays dark for syntax contrast */
-  --code-surface: #1d1d1f;
-  --code-surface-elevated: #28282c;
-  --code-border: #3a3a3e;
-  --code-ink: #f5f5f7;
-  --code-muted: #98989d;
+  --code-surface: #101722;
+  --code-surface-elevated: #172131;
+  --code-border: #2a3a50;
+  --code-ink: #eef4ff;
+  --code-muted: #91a2ba;
   --code-focus: #8fc6ff;
   --code-header: #2c2c30;
 
@@ -85,6 +85,28 @@
     min-height: 100vh;
     background-color: var(--canvas);
     color: var(--ink);
+  }
+
+  /* Dark code wells must never inherit the light-theme ink color. */
+  [class~="bg-[var(--code-surface)]"],
+  [class~="bg-[var(--code-surface-elevated)]"] {
+    color: var(--code-ink);
+  }
+
+  [class~="bg-[var(--code-surface)]"] [class~="text-[var(--ink)]"],
+  [class~="bg-[var(--code-surface-elevated)]"] [class~="text-[var(--ink)]"],
+  [class~="bg-[var(--code-surface)]"] [class~="text-[var(--secondary-text)]"],
+  [class~="bg-[var(--code-surface-elevated)]"] [class~="text-[var(--secondary-text)]"],
+  [class~="bg-[var(--code-surface)]"] [class~="text-[var(--muted-text)]"],
+  [class~="bg-[var(--code-surface-elevated)]"] [class~="text-[var(--muted-text)]"] {
+    color: var(--code-ink) !important;
+  }
+
+  [class~="bg-[var(--code-surface)]"] [class~="text-[var(--secondary-text)]"],
+  [class~="bg-[var(--code-surface-elevated)]"] [class~="text-[var(--secondary-text)]"],
+  [class~="bg-[var(--code-surface)]"] [class~="text-[var(--muted-text)]"],
+  [class~="bg-[var(--code-surface-elevated)]"] [class~="text-[var(--muted-text)]"] {
+    color: var(--code-muted) !important;
   }
 
   code, pre, kbd, samp {

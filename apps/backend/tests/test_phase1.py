@@ -89,7 +89,7 @@ def test_save_reopen_and_permissions():
                 assert api.post("/snippets", json=sample).status_code == 401
                 assert (
                     api.post(
-                        "/snippets", headers=owner, content=b" " * 1048577
+                            "/snippets", headers=owner, content=b" " * (6 * 1024 * 1024 + 1)
                     ).status_code
                     == 413
                 )

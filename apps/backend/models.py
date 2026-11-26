@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
+MAX_FILE_BYTES = 5 * 1024 * 1024
+
 
 def storage_text(value: str) -> str:
     if "\0" in value:
@@ -36,8 +38,8 @@ class SnippetFile(BaseModel):
     @field_validator("content")
     @classmethod
     def file_size(cls, value: str) -> str:
-        if len(value.encode("utf-8")) > 262144:
-            raise ValueError("File exceeds 262144 bytes")
+        if len(value.encode("utf-8")) > MAX_FILE_BYTES:
+            raise ValueError("File exceeds 5 MiB")
         return value
 
 
@@ -47,6 +49,7 @@ class CreateSnippet(BaseModel):
     description: Text = Field(default='', max_length=2000)
     tags: list[Text] = Field(default_factory=list, max_length=10)
     visibility: Literal["public", "unlisted", "private"]
+    link_expiry: Literal["1h", "1d", "7d", "forever"] = "forever"
     files: list[SnippetFile] = Field(min_length=1, max_length=20)
 
     @field_validator("title")

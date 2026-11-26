@@ -20,6 +20,10 @@ graphs, and live graph updates.
 
 ## Checks
 
+- Write-path watchdog blocks high-confidence dangerous-code signatures without executing submitted code.
+- Watchdog scanning runs in a private, hardened container; the API fails closed if the scanner is unavailable.
+- Each file is capped at 5 MiB UTF-8; the JSON request envelope is capped at 6 MiB.
+
 - Backend acceptance suite: 9 passed.
 - Targeted embed regression: passed.
 - Live graph regression: passed.

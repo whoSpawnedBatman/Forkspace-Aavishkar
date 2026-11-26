@@ -4,6 +4,7 @@ import os
 import re
 import time
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from html import escape
 from pathlib import Path
 from typing import Annotated, Literal
@@ -67,8 +68,11 @@ if not AUTH_URL or not PUBLISHABLE_KEY:
     raise RuntimeError("Set SUPABASE_AUTH_URL and SUPABASE_PUBLISHABLE_KEY")
 
 
-def problem(status: int, code: str, message: str) -> HTTPException:
-    return HTTPException(status, {"code": code, "message": message})
+def problem(status: int, code: str, message: str, details=None) -> HTTPException:
+    detail = {"code": code, "message": message}
+    if details:
+        detail["details"] = details
+    return HTTPException(status, detail)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -153,10 +157,23 @@ Caller = Annotated[UUID | None, Depends(caller)]
 async def read_body(request: Request) -> CreateSnippet:
     body = bytearray()
     async for chunk in request.stream():
-        if len(body) + len(chunk) > 1048576:
-            raise problem(413, "payload_too_large", "Request exceeds 1 MiB.")
+        if len(body) + len(chunk) > 6 * 1024 * 1024:
+            raise problem(413, "payload_too_large", "Request exceeds 6 MiB.")
         body.extend(chunk)
-    return CreateSnippet.model_validate_json(body)
+    data = CreateSnippet.model_validate_json(body)
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            response = await client.post(
+                os.environ.get("WATCHDOG_URL", "http://watchdog:9000") + "/scan",
+                json={"files": [file.model_dump() for file in data.files]},
+            )
+            response.raise_for_status()
+            findings = response.json()["findings"]
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        raise problem(503, "watchdog_unavailable", "Security scanner is unavailable.") from exc
+    if findings:
+        raise problem(422, "malicious_code", "Potentially dangerous code detected by the watchdog.", findings)
+    return data
 
 
 def require_user(user):
@@ -165,14 +182,20 @@ def require_user(user):
     return user
 
 
+def expiry_for(value):
+    return None if value == "forever" else {"1h": timedelta(hours=1), "1d": timedelta(days=1), "7d": timedelta(days=7)}[value]
+
+
 def readable(db, id, user, *, owner=False, lock=False):
     predicate = (
         "s.owner_id = %s"
         if owner
-        else """(s.visibility IN ('public','unlisted') OR s.owner_id = %s OR
+        else """(s.visibility = 'public' OR
+                 (s.visibility = 'unlisted' AND (s.link_expires_at IS NULL OR s.link_expires_at > clock_timestamp())) OR s.owner_id = %s OR
                  EXISTS (
                     SELECT 1 FROM snippet_access a
-                    WHERE a.snippet_id=s.id AND a.user_id=%s))"""
+                    WHERE a.snippet_id=s.id AND a.user_id=%s
+                      AND (s.link_expires_at IS NULL OR s.link_expires_at > clock_timestamp())))"""
     )
     row = db.execute(
         "SELECT s.* FROM snippets s WHERE s.id = %s AND "
@@ -219,15 +242,15 @@ def create_snippet(user: Caller, data: Annotated[CreateSnippet, Depends(read_bod
     snippet_id = uuid4()
     with connect() as db:
         db.execute(
-            "INSERT INTO snippets (id, owner_id, title, description, tags, visibility) VALUES (%s,%s,%s,%s,%s,%s)",
-            (snippet_id, user, data.title, data.description, data.tags, data.visibility),
+            "INSERT INTO snippets (id, owner_id, title, description, tags, visibility, link_expires_at) VALUES (%s,%s,%s,%s,%s,%s, CASE WHEN %s IS NULL THEN NULL ELSE clock_timestamp() + %s END)",
+            (snippet_id, user, data.title, data.description, data.tags, data.visibility, expiry_for(data.link_expiry), expiry_for(data.link_expiry)),
         )
         save_files(db, snippet_id, data.files)
         rebuild_chunks(db, snippet_id)
     return {"id": snippet_id}
 
 
-SUMMARY = """SELECT s.id, s.owner_id, s.title, s.description, s.tags, s.visibility, s.created_at, s.updated_at,
+SUMMARY = """SELECT s.id, s.owner_id, COALESCE(u.raw_user_meta_data->>'username', split_part(u.email, '@', 1), 'Developer') AS owner_name, s.title, s.description, s.tags, s.visibility, s.link_expires_at, s.created_at, s.updated_at,
                     CASE WHEN EXISTS (SELECT 1 FROM snippets p WHERE p.id = s.parent_snippet_id
                                       AND (p.visibility = 'public' OR p.owner_id = %s))
                          THEN s.parent_snippet_id ELSE NULL END AS parent_snippet_id,
@@ -235,7 +258,7 @@ SUMMARY = """SELECT s.id, s.owner_id, s.title, s.description, s.tags, s.visibili
                     ARRAY(SELECT path FROM snippet_files WHERE snippet_id = s.id ORDER BY position) AS file_paths,
                     (SELECT count(*) FROM snippet_stars WHERE snippet_id = s.id) AS star_count,
                     EXISTS (SELECT 1 FROM snippet_stars WHERE snippet_id = s.id AND user_id = %s) AS starred
-             FROM snippets s """
+             FROM snippets s LEFT JOIN auth.users u ON u.id = s.owner_id """
 
 
 @app.get("/snippets")
@@ -254,9 +277,9 @@ def list_snippets(
         "public": "WHERE s.visibility = 'public'",
         "mine": "WHERE s.owner_id = %s",
         "starred": """WHERE EXISTS (SELECT 1 FROM snippet_stars st WHERE st.snippet_id=s.id AND st.user_id=%s)
-            AND (s.visibility IN ('public','unlisted') OR s.owner_id=%s OR EXISTS
+            AND (s.visibility = 'public' OR (s.visibility='unlisted' AND (s.link_expires_at IS NULL OR s.link_expires_at > clock_timestamp())) OR s.owner_id=%s OR EXISTS
             (SELECT 1 FROM snippet_access a WHERE a.snippet_id=s.id AND a.user_id=%s))""",
-        "shared": """WHERE s.visibility = 'private' AND EXISTS (
+        "shared": """WHERE s.visibility = 'private' AND (s.link_expires_at IS NULL OR s.link_expires_at > clock_timestamp()) AND EXISTS (
             SELECT 1 FROM snippet_access a WHERE a.snippet_id=s.id AND a.user_id=%s)""",
     }[scope]
     params = [user, user] if scope == "public" else [user, user, user]
@@ -305,7 +328,7 @@ def ask_snippet(id: UUID, user: Caller, data: AskSnippet):
         now = time.monotonic()
         key = f"{user}:{id}"
         recent = [stamp for stamp in ask_limits.get(key, []) if now - stamp < 60]
-        if len(recent) >= int(os.getenv("RAG_MAX_REQUESTS_PER_MINUTE", "10")):
+        if len(recent) >= min(int(os.getenv("RAG_MAX_REQUESTS_PER_MINUTE", "3")), 3):
             raise problem(429, "rate_limited", "Too many assistant requests. Try again shortly.")
         ask_limits[key] = recent + [now]
         terms = set(re.findall(r"[a-zA-Z0-9_]{2,}", data.question.lower()))
@@ -330,21 +353,41 @@ def ask_snippet(id: UUID, user: Caller, data: AskSnippet):
             ).fetchall()
             chunks = [row for row in chunks if overview or any(term in row["content"].lower() for term in terms)]
     context = "\n\n".join(f"[{row['file_path']}:{row['start_line']}]\n{row['content']}" for row in chunks[:4])
-    context = context[:int(os.getenv("RAG_MAX_CONTEXT_CHARS", "6000"))]
+    context = context[:min(int(os.getenv("RAG_MAX_CONTEXT_CHARS", "4000")), 4000)]
     if not context:
         context = "No matching code chunk was found in the snippet."
+    prompt = f"Question: {data.question}\n\nCode context:\n{context}"
+    sources = [f"{row['file_path']}:{row['start_line']}" for row in chunks[:4]]
+    timeout = min(float(os.getenv("RAG_OPENAI_TIMEOUT_SECONDS", "20")), 20)
     key = os.getenv("OPENAI_API_KEY")
     if key:
-        result = httpx.post(
-            os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1") + "/chat/completions",
-            headers={"Authorization": f"Bearer {key}"},
-            json={"model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"), "temperature": 0.1, "max_tokens": 300,
-                  "messages": [{"role": "system", "content": "Answer briefly using only the code context. Say insufficient context when needed."},
-                               {"role": "user", "content": f"Question: {data.question}\n\nCode context:\n{context}"}]},
-            timeout=30,
-        )
-        if result.status_code == 200:
-            return {"answer": result.json()["choices"][0]["message"]["content"], "sources": [f"{row['file_path']}:{row['start_line']}" for row in chunks[:4]]}
+        try:
+            result = httpx.post(
+                os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1") + "/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"), "temperature": 0.1, "max_tokens": min(int(os.getenv("RAG_MAX_OUTPUT_TOKENS", "200")), 200),
+                      "messages": [{"role": "system", "content": "Answer briefly using only the code context. Say insufficient context when needed."}, {"role": "user", "content": prompt}]},
+                timeout=timeout,
+            )
+            if result.status_code == 200:
+                return {"answer": result.json()["choices"][0]["message"]["content"], "sources": sources}
+        except httpx.HTTPError:
+            pass
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            result = httpx.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/" + os.getenv("GEMINI_MODEL", "gemini-2.0-flash") + ":generateContent",
+                params={"key": gemini_key},
+                json={"systemInstruction": {"parts": [{"text": "Answer briefly using only the code context. Say insufficient context when needed."}]},
+                      "contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.1, "maxOutputTokens": min(int(os.getenv("RAG_MAX_OUTPUT_TOKENS", "200")), 200)}},
+                timeout=timeout,
+            )
+            if result.status_code == 200:
+                answer = result.json()["candidates"][0]["content"]["parts"][0]["text"]
+                return {"answer": answer, "sources": sources}
+        except (httpx.HTTPError, KeyError, IndexError, TypeError):
+            pass
     if chunks:
         source_text = ", ".join(f"{row['file_path']}:{row['start_line']}" for row in chunks[:4])
         excerpts = []
@@ -367,8 +410,8 @@ def replace_snippet(
     with connect() as db:
         readable(db, id, user, owner=True, lock=True)
         db.execute(
-            "UPDATE snippets SET title=%s, description=%s, tags=%s, visibility=%s, updated_at=clock_timestamp() WHERE id=%s",
-            (data.title, data.description, data.tags, data.visibility, id),
+            "UPDATE snippets SET title=%s, description=%s, tags=%s, visibility=%s, link_expires_at=CASE WHEN %s IS NULL THEN NULL ELSE clock_timestamp() + %s END, updated_at=clock_timestamp() WHERE id=%s",
+            (data.title, data.description, data.tags, data.visibility, expiry_for(data.link_expiry), expiry_for(data.link_expiry), id),
         )
         db.execute("DELETE FROM snippet_files WHERE snippet_id=%s", (id,))
         save_files(db, id, data.files)

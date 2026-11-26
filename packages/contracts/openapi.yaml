@@ -47,7 +47,7 @@ paths:
                   id: { $ref: '#/components/schemas/Id' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '413':
-          description: JSON request body exceeds 1 MiB (1048576 bytes). Code payload_too_large.
+          description: JSON request body exceeds 6 MiB (6291456 bytes). Code payload_too_large.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -423,11 +423,11 @@ components:
               that are empty, a single dot or a double dot.
           content:
             type: string
-            description: Exact text including line endings. Empty text is valid. Maximum 262144 UTF-8 bytes per file.
+            description: Exact text including line endings. Empty text is valid. Maximum 5242880 UTF-8 bytes per file.
     CreateSnippet:
       type: object
       additionalProperties: false
-      description: Reject U+0000 and invalid Unicode scalar values in text fields. Maximum JSON body size is 1 MiB.
+      description: Reject U+0000 and invalid Unicode scalar values in text fields. Maximum JSON body size is 6 MiB.
       required: [title, files, visibility]
       properties:
         title: { $ref: '#/components/schemas/Title' }
@@ -437,6 +437,11 @@ components:
           $ref: '#/components/schemas/Tags'
           default: []
         visibility: { $ref: '#/components/schemas/Visibility' }
+        link_expiry:
+          type: string
+          enum: [1h, 1d, 7d, forever]
+          default: forever
+          description: Share-link lifetime for unlisted and private snippets.
         files: { $ref: '#/components/schemas/Files' }
     Summary:
       type: object
@@ -487,7 +492,7 @@ components:
           type: object
           required: [code, message]
           properties:
-            code: { type: string, enum: [unauthorized, not_found, invalid_input, payload_too_large, service_error, method_not_allowed] }
+            code: { type: string, enum: [unauthorized, not_found, invalid_input, malicious_code, payload_too_large, service_error, method_not_allowed] }
             message: { type: string }
             details:
               type: array
@@ -522,7 +527,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     TooLarge:
-      description: JSON body exceeds 1 MiB. Code payload_too_large.
+      description: JSON body exceeds 6 MiB. Code payload_too_large.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

@@ -430,7 +430,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             transition={prefersReducedMotion ? INSTANT_TRANSITION : TRANSITION_FAST}
             className="rounded-[8px] border border-[var(--hairline)] bg-[var(--code-surface)] p-3.5 text-center"
           >
-            <p className="text-xs font-medium text-[var(--ink)]">
+            <p className="text-xs font-medium text-[var(--code-ink)]">
               {activeTag || urlQuery
                 ? 'No matching snippets'
                 : scope === 'mine' && isGuest

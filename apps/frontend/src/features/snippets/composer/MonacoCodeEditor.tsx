@@ -50,6 +50,7 @@ interface MonacoCodeEditorProps {
   readOnly?: boolean;
   onChange: (fileId: string, nextValue: string) => void;
   onLoadError: () => void;
+  onEscape?: () => void;
 }
 
 export default function MonacoCodeEditor({
@@ -58,6 +59,7 @@ export default function MonacoCodeEditor({
   readOnly = false,
   onChange,
   onLoadError,
+  onEscape,
 }: MonacoCodeEditorProps) {
   const editorRef = React.useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const modelsRef = React.useRef<Map<string, Monaco.editor.ITextModel>>(new Map());
@@ -151,6 +153,9 @@ export default function MonacoCodeEditor({
       if (!currentModel) return;
       onChangeRef.current(activeFileIdRef.current, currentModel.getValue());
     });
+    editor.onKeyDown((event) => {
+      if (event.keyCode === monaco.KeyCode.Escape) onEscape?.();
+    });
   };
 
   if (!activeFile) return null;
@@ -190,11 +195,11 @@ export default function MonacoCodeEditor({
               inherit: true,
               rules: [],
               colors: {
-                'editor.background': '#1d1d1f',
-                'editor.foreground': '#f5f5f7',
+                'editor.background': '#101722',
+                'editor.foreground': '#eef4ff',
                 'editorLineNumber.foreground': '#7c7c81',
                 'editorLineNumber.activeForeground': '#d2d2d7',
-                'editor.lineHighlightBackground': '#28282c',
+                'editor.lineHighlightBackground': '#172131',
                 'editorCursor.foreground': '#8fc6ff',
                 'editor.selectionBackground': '#0071e344',
               },

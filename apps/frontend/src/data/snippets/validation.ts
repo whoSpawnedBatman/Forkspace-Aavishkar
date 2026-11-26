@@ -2,6 +2,7 @@ import type { FieldIssue, SnippetDraft, SnippetFile } from './domain';
 
 const CONTROL_CHAR_REGEX = /[\u0000-\u001F\u007F]/;
 const DRIVE_PREFIX_REGEX = /^[a-zA-Z]:/;
+export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   ts: 'typescript',
@@ -177,6 +178,9 @@ export function validateSnippetDraft(draft: SnippetDraft): ValidatedDraftResult 
       language: detectLanguageFromPath(normalized),
       text: file.text,
     });
+    if (new TextEncoder().encode(file.text).byteLength > MAX_FILE_BYTES) {
+      issues.push({ field: 'files', path: normalized, fileIndex: index, message: 'File must be 5 MiB or smaller.' });
+    }
   });
 
   if (issues.length > 0) {
@@ -190,6 +194,7 @@ export function validateSnippetDraft(draft: SnippetDraft): ValidatedDraftResult 
       title: trimmedTitle,
       description: draft.description?.trim() || undefined,
       visibility: draft.visibility,
+      linkExpiry: draft.linkExpiry,
       tags: normalizeTags(draft.tags),
       files: normalizedFiles,
     },

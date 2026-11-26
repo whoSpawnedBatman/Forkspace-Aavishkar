@@ -300,8 +300,8 @@ rendering and user-facing loading and error states.
 | 201 | A snippet or fork was committed and its ID is returned. |
 | 401 | A required token is missing or invalid. |
 | 404 | The ID is missing or the resource is hidden from this caller. |
-| 413 | The JSON body is larger than 1 MiB. |
-| 422 | Request validation failed. |
+| 413 | The JSON body is larger than 6 MiB. |
+| 422 | Request validation failed, including a watchdog match or a file over 5 MiB. |
 | 500 | PostgreSQL or an identity provider dependency is unavailable. |
 
 ### Why Redis and pgvector are not required for the demo
